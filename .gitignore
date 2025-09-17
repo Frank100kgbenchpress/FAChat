@@ -1,55 +1,157 @@
-# Prerequisites
-*.d
+# .gitignore para LinkChat - Proyecto de Redes
 
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
+# ==================== #
+#  Entornos Virtuales  #
+# ==================== #
+# Python virtual environments
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
 
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
+# ==================== #
+#   Archivos Python    #
+# ==================== #
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
 *.so
-*.so.*
-*.dylib
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+# ==================== #
+#   Archivos de IDE    #
+# ==================== #
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
+# PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# Other IDEs
+.project
+.pydevproject
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
 
-# debug information files
-*.dwo
+# ==================== #
+#   Archivos Sistema   #
+# ==================== #
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ==================== #
+#   Archivos Logs      #
+# ==================== #
+# Logs
+*.log
+logs/
+log/
+
+# ==================== #
+#   Archivos Datos     #
+# ==================== #
+# Datos de la aplicación
+*.db
+*.sqlite
+*.sqlite3
+database/
+
+# Archivos de transferencia (si los guardas temporalmente)
+downloads/
+received_files/
+temp/
+
+# ==================== #
+#   Configuraciones    #
+# ==================== #
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Configuraciones locales
+config.local.ini
+settings.local.py
+
+# ==================== #
+#   Docker             #
+# ==================== #
+# Docker (si usas)
+docker-compose.override.yml
+
+# ==================== #
+#   Archivos Proyecto  #
+# ==================== #
+# Archivos de prueba grandes
+test_large_files/
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# ==================== #
+#   Específico Python #
+# ==================== #
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# ==================== #
+#   Archivos Dev       #
+# ==================== #
+# Desarrollo
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pytest_cache/
+.mypy_cache/
