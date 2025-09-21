@@ -1,13 +1,14 @@
-# src/ethernet.py
 """
-Ethernet helper for LinkChat.
-- send_frame(dest_mac, payload, eth_type)
-- recv_one() -> blocking single-frame read (src_mac, payload)
-- start_recv_loop(callback) -> launches a background thread that llama callback(src_mac, payload)
-- stop_recv_loop()
-Requiere permisos (sudo). Ajusta INTERFACE.
-"""
+ethernet.py - Helper de bajo nivel para LinkChat.
 
+Exporta:
+- send_frame(dest_mac, payload, eth_type=...)
+- recv_one(eth_type=...) -> (src_mac_str, payload)  # bloqueante
+- start_recv_loop(callback, eth_type=...)  # callback(src_mac, payload)
+- stop_recv_loop()
+
+Nota: requiere permisos (sudo). Ajusta INTERFACE al nombre de tu interfaz (ip a).
+"""
 import socket
 import struct
 import fcntl
@@ -48,23 +49,10 @@ def _ensure_send_socket():
         print(f"[ethernet] send socket creado y ligado a {INTERFACE}")
 
 
-# ---------- parche recomendado para ethernet.py (reemplazar las funciones indicadas) ----------
-def _ensure_recv_socket(eth_type: int = ETH_P_LINKCHAT):
-    """
-    Abre un socket AF_PACKET en ETH_P_ALL y filtramos en Python.
-    Esto evita problemas con el tercer argumento al crear el socket.
-    """
-    global _recv_sock
-    if _recv_sock is None:
-        _recv_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))  # ETH_P_ALL
-        _recv_sock.bind((INTERFACE, 0))
-        print(f"[ethernet] recv socket creado y ligado a {INTERFACE} (escucha ALL, filtrando por {hex(eth_type)})")
-
-
 def send_frame(dest_mac: str, payload: bytes, eth_type: int = ETH_P_LINKCHAT) -> None:
     """
     Envía una trama Ethernet: dest(6) + src(6) + eth_type(2) + payload.
-    Añade prints para debug.
+    dest_mac: "AA:BB:CC:DD:EE:FF"
     """
     _ensure_send_socket()
 
@@ -80,6 +68,8 @@ def send_frame(dest_mac: str, payload: bytes, eth_type: int = ETH_P_LINKCHAT) ->
 
     try:
         sent = _send_sock.send(frame)
+        # impresión de debug útil
+        # si quieres silencio en producción, comenta la siguiente línea
         print(f"[ethernet] enviado {sent} bytes a {dest_mac} (eth_type={hex(eth_type)})")
     except PermissionError:
         print("[ethernet] permiso denegado: ejecuta con sudo")
@@ -89,6 +79,18 @@ def send_frame(dest_mac: str, payload: bytes, eth_type: int = ETH_P_LINKCHAT) ->
         raise
 
 
+def _ensure_recv_socket(eth_type: int = ETH_P_LINKCHAT):
+    """
+    Abre socket AF_PACKET en ETH_P_ALL y filtramos en Python.
+    Evita problemas por pasar eth_type en la creación del socket.
+    """
+    global _recv_sock
+    if _recv_sock is None:
+        _recv_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))  # ETH_P_ALL
+        _recv_sock.bind((INTERFACE, 0))
+        print(f"[ethernet] recv socket creado y ligado a {INTERFACE} (escucha ALL, filtrando por {hex(eth_type)})")
+
+
 def recv_one(eth_type: int = ETH_P_LINKCHAT) -> tuple[str, bytes]:
     """
     Bloqueante: espera y devuelve (src_mac_str, payload) del primer paquete con eth_type.
@@ -96,7 +98,6 @@ def recv_one(eth_type: int = ETH_P_LINKCHAT) -> tuple[str, bytes]:
     _ensure_recv_socket(eth_type)
     while True:
         raw, _ = _recv_sock.recvfrom(65535)
-        # comprobar longitud mínima
         if len(raw) < 14:
             continue
         try:
@@ -111,9 +112,44 @@ def recv_one(eth_type: int = ETH_P_LINKCHAT) -> tuple[str, bytes]:
         return src_mac_str, payload
 
 
+def _recv_loop(callback: Callable[[str, bytes], None], eth_type: int):
+    """
+    Loop que corre en hilo: recibe paquetes y llama callback(src_mac_str, payload).
+    """
+    global _recv_running
+    _ensure_recv_socket(eth_type)
+    _recv_running = True
+    try:
+        while _recv_running:
+            try:
+                raw, _ = _recv_sock.recvfrom(65535)
+            except OSError:
+                break
+            # protección si paquete muy corto
+            if len(raw) < 14:
+                continue
+            try:
+                pkt_eth_type = struct.unpack("!H", raw[12:14])[0]
+            except Exception:
+                continue
+            if pkt_eth_type != eth_type:
+                continue
+            src = raw[6:12]
+            payload = raw[14:]
+            src_mac_str = ":".join(f"{b:02x}" for b in src)
+            try:
+                callback(src_mac_str, payload)
+            except Exception as e:
+                # no queremos que una excepción en el callback termine el loop
+                print(f"[ethernet] callback error: {e}")
+    finally:
+        _recv_running = False
+
+
 def start_recv_loop(callback: Callable[[str, bytes], None], eth_type: int = ETH_P_LINKCHAT) -> None:
     """
-    Lanza un hilo fondo que llama callback(src_mac, payload). Espera hasta que el hilo indique que está corriendo.
+    Lanza un hilo en background que llama callback(src_mac, payload) por cada paquete.
+    Espera brevemente hasta confirmar que el loop arrancó.
     """
     global _recv_thread, _recv_running
     if _recv_thread and _recv_thread.is_alive():
@@ -122,7 +158,7 @@ def start_recv_loop(callback: Callable[[str, bytes], None], eth_type: int = ETH_
     _recv_thread = threading.Thread(target=_recv_loop, args=(callback, eth_type), daemon=True)
     _recv_thread.start()
 
-    # Esperar hasta que el loop realmente comience (timeout para no bloquear indefinidamente)
+    # esperar confirmación de inicio (timeout)
     wait = 0.0
     while wait < 2.0:
         if _recv_running:
@@ -133,36 +169,9 @@ def start_recv_loop(callback: Callable[[str, bytes], None], eth_type: int = ETH_
     print("[ethernet] advertencia: recv loop no confirmó inicio en 2s")
 
 
-
-def _recv_loop(callback: Callable[[str, bytes], None], eth_type: int):
-    global _recv_running
-    _ensure_recv_socket(eth_type)
-    _recv_running = True
-    try:
-        while _recv_running:
-            try:
-                raw, _ = _recv_sock.recvfrom(65535)
-            except OSError:
-                break
-            pkt_eth_type = struct.unpack("!H", raw[12:14])[0]
-            if pkt_eth_type != eth_type:
-                continue
-            src = raw[6:12]
-            payload = raw[14:]
-            src_mac_str = ":".join(f"{b:02x}" for b in src)
-            try:
-                callback(src_mac_str, payload)
-            except Exception as e:
-                print(f"[ethernet] callback error: {e}")
-    finally:
-        _recv_running = False
-
-
-
-
 def stop_recv_loop():
-    """Detiene el loop de recepción y cierra socket."""
-    global _recv_running, _recv_sock
+    """Detiene el loop de recepción y cierra socket. Espera a que el hilo termine."""
+    global _recv_running, _recv_sock, _recv_thread
     _recv_running = False
     try:
         if _recv_sock:
@@ -170,3 +179,10 @@ def stop_recv_loop():
     except Exception:
         pass
     _recv_sock = None
+
+    # intentar hacer join del hilo (no bloquear indefinidamente)
+    try:
+        if _recv_thread and _recv_thread.is_alive():
+            _recv_thread.join(timeout=1.0)
+    except Exception:
+        pass
