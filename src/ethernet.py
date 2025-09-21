@@ -1,70 +1,172 @@
+# src/ethernet.py
 """
-Raw Ethernet functions (send/receive) for LinkChat
-Requiere permisos de superusuario (sudo).
+Ethernet helper for LinkChat.
+- send_frame(dest_mac, payload, eth_type)
+- recv_one() -> blocking single-frame read (src_mac, payload)
+- start_recv_loop(callback) -> launches a background thread that llama callback(src_mac, payload)
+- stop_recv_loop()
+Requiere permisos (sudo). Ajusta INTERFACE.
 """
 
 import socket
 import struct
 import fcntl
-import struct
-# Ajusta esta interfaz a la de tu máquina (ej. "enp0s3", "eth0", "wlp2s0")
-INTERFACE = "wlp2s0"
+import threading
+import time
+from typing import Callable, Optional
 
-def send_frame(dest_mac: str, payload: bytes, eth_type: int = 0x1234) -> None:
-    """
-    Envía una trama Ethernet con un payload al destino indicado.
-    dest_mac: "AA:BB:CC:DD:EE:FF"
-    payload: bytes
-    eth_type: 2 bytes (por defecto 0x1234 para LinkChat)
-    """
-    # Convertir MAC destino
-    dest_mac_bytes = bytes.fromhex(dest_mac.replace(":", ""))
+# --- CONFIGURA ESTO a la interfaz de tu Mint (ip a para verla) ---
+INTERFACE = "wlp2s0"           # <- AJUSTA AQUÍ SI ES NECESARIO
+ETH_P_LINKCHAT = 0x1234        # EtherType a usar
 
-    # Obtener la MAC origen de la interfaz
-    src_mac_bytes = get_interface_mac(INTERFACE)
-
-    # Empaquetar cabecera Ethernet: [dest][src][eth_type]
-    eth_header = dest_mac_bytes + src_mac_bytes + struct.pack("!H", eth_type)
-
-    # Trama completa
-    frame = eth_header + payload
-
-    # Crear socket RAW
-    sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-    sock.bind((INTERFACE, 0))
-    sock.send(frame)
-    sock.close()
-    print(f"[+] Trama enviada a {dest_mac}")
+# sockets/estado globales
+_send_sock: Optional[socket.socket] = None
+_recv_sock: Optional[socket.socket] = None
+_recv_thread: Optional[threading.Thread] = None
+_recv_running = False
 
 
-def recv_frame() -> tuple[str, bytes]:
-    """
-    Recibe una trama Ethernet.
-    Retorna (mac_origen_str, payload)
-    """
-    sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
-
-    raw_data, addr = sock.recvfrom(65535)
-
-    # Parsear cabecera Ethernet (14 bytes: dest 6, src 6, eth_type 2)
-    dest_mac = raw_data[0:6]
-    src_mac = raw_data[6:12]
-    eth_type = struct.unpack("!H", raw_data[12:14])[0]
-    payload = raw_data[14:]
-
-    src_mac_str = ":".join(f"{b:02x}" for b in src_mac)
-
-    return src_mac_str, payload
+def _mac_str_to_bytes(mac: str) -> bytes:
+    return bytes.fromhex(mac.replace(":", ""))
 
 
 def get_interface_mac(interface: str) -> bytes:
-    """
-    Obtiene la MAC de la interfaz en forma de bytes.
-    """
-    
+    """Devuelve MAC (6 bytes) de la interfaz dada."""
     SIOCGIFHWADDR = 0x8927
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    info = fcntl.ioctl(s.fileno(),
+                       SIOCGIFHWADDR,
+                       struct.pack("256s", interface[:15].encode('utf-8')))
+    return info[18:24]
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    info = fcntl.ioctl(sock.fileno(), SIOCGIFHWADDR,
-                       struct.pack("256s", interface[:15].encode("utf-8")))
-    return info[18:24]  # MAC address
+
+def _ensure_send_socket():
+    global _send_sock
+    if _send_sock is None:
+        _send_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+        _send_sock.bind((INTERFACE, 0))
+        print(f"[ethernet] send socket creado y ligado a {INTERFACE}")
+
+
+# ---------- parche recomendado para ethernet.py (reemplazar las funciones indicadas) ----------
+def _ensure_recv_socket(eth_type: int = ETH_P_LINKCHAT):
+    """
+    Abre un socket AF_PACKET en ETH_P_ALL y filtramos en Python.
+    Esto evita problemas con el tercer argumento al crear el socket.
+    """
+    global _recv_sock
+    if _recv_sock is None:
+        _recv_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))  # ETH_P_ALL
+        _recv_sock.bind((INTERFACE, 0))
+        print(f"[ethernet] recv socket creado y ligado a {INTERFACE} (escucha ALL, filtrando por {hex(eth_type)})")
+
+
+def send_frame(dest_mac: str, payload: bytes, eth_type: int = ETH_P_LINKCHAT) -> None:
+    """
+    Envía una trama Ethernet: dest(6) + src(6) + eth_type(2) + payload.
+    Añade prints para debug.
+    """
+    _ensure_send_socket()
+
+    dest = _mac_str_to_bytes(dest_mac)
+    try:
+        src = get_interface_mac(INTERFACE)
+    except Exception as e:
+        print(f"[ethernet] error obteniendo MAC de {INTERFACE}: {e}")
+        raise
+
+    eth_type_bytes = struct.pack("!H", eth_type)
+    frame = dest + src + eth_type_bytes + payload
+
+    try:
+        sent = _send_sock.send(frame)
+        print(f"[ethernet] enviado {sent} bytes a {dest_mac} (eth_type={hex(eth_type)})")
+    except PermissionError:
+        print("[ethernet] permiso denegado: ejecuta con sudo")
+        raise
+    except Exception as e:
+        print(f"[ethernet] error enviando: {e}")
+        raise
+
+
+def recv_one(eth_type: int = ETH_P_LINKCHAT) -> tuple[str, bytes]:
+    """
+    Bloqueante: espera y devuelve (src_mac_str, payload) del primer paquete con eth_type.
+    """
+    _ensure_recv_socket(eth_type)
+    while True:
+        raw, _ = _recv_sock.recvfrom(65535)
+        # comprobar longitud mínima
+        if len(raw) < 14:
+            continue
+        try:
+            pkt_eth_type = struct.unpack("!H", raw[12:14])[0]
+        except Exception:
+            continue
+        if pkt_eth_type != eth_type:
+            continue
+        src = raw[6:12]
+        payload = raw[14:]
+        src_mac_str = ":".join(f"{b:02x}" for b in src)
+        return src_mac_str, payload
+
+
+def start_recv_loop(callback: Callable[[str, bytes], None], eth_type: int = ETH_P_LINKCHAT) -> None:
+    """
+    Lanza un hilo fondo que llama callback(src_mac, payload). Espera hasta que el hilo indique que está corriendo.
+    """
+    global _recv_thread, _recv_running
+    if _recv_thread and _recv_thread.is_alive():
+        print("[ethernet] recv thread ya activo")
+        return
+    _recv_thread = threading.Thread(target=_recv_loop, args=(callback, eth_type), daemon=True)
+    _recv_thread.start()
+
+    # Esperar hasta que el loop realmente comience (timeout para no bloquear indefinidamente)
+    wait = 0.0
+    while wait < 2.0:
+        if _recv_running:
+            print("[ethernet] recv loop iniciado correctamente")
+            return
+        time.sleep(0.02)
+        wait += 0.02
+    print("[ethernet] advertencia: recv loop no confirmó inicio en 2s")
+
+
+
+def _recv_loop(callback: Callable[[str, bytes], None], eth_type: int):
+    global _recv_running
+    _ensure_recv_socket(eth_type)
+    _recv_running = True
+    try:
+        while _recv_running:
+            try:
+                raw, _ = _recv_sock.recvfrom(65535)
+            except OSError:
+                break
+            pkt_eth_type = struct.unpack("!H", raw[12:14])[0]
+            if pkt_eth_type != eth_type:
+                continue
+            src = raw[6:12]
+            payload = raw[14:]
+            src_mac_str = ":".join(f"{b:02x}" for b in src)
+            try:
+                callback(src_mac_str, payload)
+            except Exception as e:
+                print(f"[ethernet] callback error: {e}")
+    finally:
+        _recv_running = False
+
+
+
+
+def stop_recv_loop():
+    """Detiene el loop de recepción y cierra socket."""
+    global _recv_running, _recv_sock
+    _recv_running = False
+    try:
+        if _recv_sock:
+            _recv_sock.close()
+    except Exception:
+        pass
+    _recv_sock = None
