@@ -1,33 +1,34 @@
-#!/usr/bin/env python3
-# scripts/test_recv_file.py
-"""
-Receptor bloqueante para pruebas de files.py
-Ejecutar en la máquina que recibe:
-sudo python3 scripts/test_recv_file.py
-"""
-import os
+from ethernet import recv_one
 import hashlib
-from files import receive_file_blocking
+import struct
 
-def sha256_file(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(65536), b""):
-            h.update(b)
-    return h.hexdigest()
+OUTFILE = "recv_prueba.txt"
 
 def main():
-    print("Esperando a recibir un archivo... (esto bloqueará hasta que termine una transferencia)")
-    src, path = receive_file_blocking()
-    if not src or not path:
-        print("No se recibió archivo o hubo un error.")
-        return
-    print(f"Transferencia completada desde {src}. Archivo guardado en: {path}")
-    try:
-        print("SHA256 del archivo recibido:", sha256_file(path))
-        print("Tamaño:", os.path.getsize(path), "bytes")
-    except Exception as e:
-        print("No se pudo calcular hash/tamaño:", e)
+    print("Esperando archivo...")
+
+    # 1. recibir tamaño
+    src, payload = recv_one()
+    filesize = struct.unpack("!Q", payload[:8])[0]
+    print(f"[receiver] Tamaño esperado: {filesize} bytes")
+
+    # 2. recibir datos hasta llegar al tamaño
+    received = 0
+    with open(OUTFILE, "wb") as f:
+        while received < filesize:
+            src, payload = recv_one()
+            f.write(payload)
+            received += len(payload)
+            print(f"[receiver] Progreso: {received}/{filesize} bytes", end="\r")
+
+    # calcular hash
+    with open(OUTFILE, "rb") as f:
+        data = f.read()
+    sha256 = hashlib.sha256(data).hexdigest()
+
+    print(f"\n[receiver] Archivo recibido y guardado en {OUTFILE}")
+    print(f"[receiver] SHA256: {sha256}")
+    print(f"[receiver] Tamaño final: {len(data)} bytes")
 
 if __name__ == "__main__":
     main()

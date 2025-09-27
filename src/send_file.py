@@ -1,42 +1,35 @@
-#!/usr/bin/env python3
-# scripts/test_send_file.py
-"""
-Emisor para pruebas de files.py
-Uso:
-sudo python3 scripts/test_send_file.py /ruta/al/archivo [dest_mac]
-
-- Si dest_mac no se indica, usa broadcast ff:ff:ff:ff:ff:ff (útil para pruebas en la misma máquina).
-"""
 import sys
 import os
-import hashlib
-from files import send_file
+import struct
+from ethernet import send_frame
 
-def sha256_file(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(65536), b""):
-            h.update(b)
-    return h.hexdigest()
+# Broadcast para pruebas
+DEST_MAC = "ff:ff:ff:ff:ff:ff"
 
 def main():
-    if len(sys.argv) < 2:
-        print("Uso: sudo python3 scripts/test_send_file.py /ruta/al/archivo [dest_mac]")
-        sys.exit(1)
+    if len(sys.argv) != 2:
+        print("Uso: sudo python3 send_file.py <archivo>")
+        return
+
     path = sys.argv[1]
-    dest = sys.argv[2] if len(sys.argv) >= 3 else "ff:ff:ff:ff:ff:ff"
-    if not os.path.isfile(path):
-        print("Archivo no encontrado:", path)
-        sys.exit(1)
-    print("Archivo a enviar:", path)
-    print("Tamaño:", os.path.getsize(path), "bytes")
-    print("SHA256:", sha256_file(path))
-    print("Enviando a", dest, "con ACKs (stop-and-wait)...")
     try:
-        send_file(dest, path, use_ack=True, retries=5, timeout=1.0)
-        print("Envío completado (se envió FILE_END).")
+        filesize = os.path.getsize(path)
+        print(f"[sender] Enviando '{path}' ({filesize} bytes)...")
+
+        # 1. enviar tamaño (8 bytes, unsigned long long big-endian)
+        send_frame(DEST_MAC, struct.pack("!Q", filesize))
+
+        # 2. enviar bloques de datos
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(1024)
+                if not chunk:
+                    break
+                send_frame(DEST_MAC, chunk)
+
+        print(f"[sender] Archivo '{path}' enviado correctamente.")
     except Exception as e:
-        print("Error durante el envío:", e)
+        print(f"[sender] Error enviando archivo: {e}")
 
 if __name__ == "__main__":
     main()
