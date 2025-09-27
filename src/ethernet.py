@@ -1,17 +1,19 @@
+# src/ethernet.py
 """
 ethernet.py - Helper de bajo nivel para LinkChat.
 
-Exporta:
+Funciones expuestas:
 - send_frame(dest_mac, payload, eth_type=...)
 - recv_one(eth_type=...) -> (src_mac_str, payload)  # bloqueante
 - start_recv_loop(callback, eth_type=...)  # callback(src_mac, payload)
 - stop_recv_loop()
 
-Nota: requiere permisos (sudo). Ajusta INTERFACE al nombre de tu interfaz (ip a).
+Nota:
+- Ajusta INTERFACE al nombre de tu interfaz (ver con `ip a`).
+- Requiere permisos para enviar/recibir tramas raw (sudo) excepto para leer la MAC vía /sys.
 """
 import socket
 import struct
-import fcntl
 import threading
 import time
 from typing import Callable, Optional
@@ -32,13 +34,21 @@ def _mac_str_to_bytes(mac: str) -> bytes:
 
 
 def get_interface_mac(interface: str) -> bytes:
-    """Devuelve MAC (6 bytes) de la interfaz dada."""
-    SIOCGIFHWADDR = 0x8927
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    info = fcntl.ioctl(s.fileno(),
-                       SIOCGIFHWADDR,
-                       struct.pack("256s", interface[:15].encode('utf-8')))
-    return info[18:24]
+    """
+    Obtiene la MAC de la interfaz leyendo /sys/class/net/<interface>/address.
+    Devuelve 6 bytes.
+    No requiere privilegios especiales.
+    """
+    path = f"/sys/class/net/{interface}/address"
+    try:
+        with open(path, "r") as f:
+            mac_str = f.read().strip()
+        # mac_str tiene formato "aa:bb:cc:dd:ee:ff"
+        return bytes.fromhex(mac_str.replace(":", ""))
+    except FileNotFoundError:
+        raise RuntimeError(f"Interfaz {interface} no encontrada (revisa INTERFACE).")
+    except Exception as e:
+        raise RuntimeError(f"Error leyendo MAC desde {path}: {e}")
 
 
 def _ensure_send_socket():
@@ -68,8 +78,6 @@ def send_frame(dest_mac: str, payload: bytes, eth_type: int = ETH_P_LINKCHAT) ->
 
     try:
         sent = _send_sock.send(frame)
-        # impresión de debug útil
-        # si quieres silencio en producción, comenta la siguiente línea
         print(f"[ethernet] enviado {sent} bytes a {dest_mac} (eth_type={hex(eth_type)})")
     except PermissionError:
         print("[ethernet] permiso denegado: ejecuta con sudo")
@@ -82,11 +90,12 @@ def send_frame(dest_mac: str, payload: bytes, eth_type: int = ETH_P_LINKCHAT) ->
 def _ensure_recv_socket(eth_type: int = ETH_P_LINKCHAT):
     """
     Abre socket AF_PACKET en ETH_P_ALL y filtramos en Python.
-    Evita problemas por pasar eth_type en la creación del socket.
+    Esto evita problemas con pasar eth_type en la creación del socket.
     """
     global _recv_sock
     if _recv_sock is None:
-        _recv_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))  # ETH_P_ALL
+        # ETH_P_ALL = 0x0003 -> usar ntohs(0x0003) en constructor (convensión común)
+        _recv_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
         _recv_sock.bind((INTERFACE, 0))
         print(f"[ethernet] recv socket creado y ligado a {INTERFACE} (escucha ALL, filtrando por {hex(eth_type)})")
 
@@ -125,7 +134,6 @@ def _recv_loop(callback: Callable[[str, bytes], None], eth_type: int):
                 raw, _ = _recv_sock.recvfrom(65535)
             except OSError:
                 break
-            # protección si paquete muy corto
             if len(raw) < 14:
                 continue
             try:

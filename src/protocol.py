@@ -66,7 +66,6 @@ def parse_header(data: bytes) -> dict:
     file_id = data[7:23]
     payload_len = struct.unpack("!H", data[23:25])[0]
 
-    # Aseguramos no index error si payload incompleto
     payload = data[25:25 + payload_len]
     return {
         "version": version,
