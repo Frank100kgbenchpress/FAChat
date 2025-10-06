@@ -15,7 +15,7 @@ from typing import Callable, Optional, Dict, Tuple
 from protocol import build_header, parse_header, FILE_START, FILE_CHUNK, FILE_END, ACK, new_file_id
 from ethernet import send_frame, start_recv_loop, stop_recv_loop, ETH_P_LINKCHAT, INTERFACE
 
-CHUNK_SIZE = 1200
+CHUNK_SIZE = 1000
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 
 # recepción en progreso
@@ -23,6 +23,7 @@ _in_progress: Dict[bytes, Dict] = {}
 _lock = threading.Lock()
 _user_cb: Optional[Callable[[str, str, str], None]] = None
 _recv_started = False
+_ack_sock: Optional[socket.socket] = None
 
 
 def _safe_meta_decode(payload: bytes) -> Tuple[str, int]:
@@ -35,56 +36,46 @@ def _safe_meta_decode(payload: bytes) -> Tuple[str, int]:
         return "received_file", 0
 
 
+
+def _get_ack_socket(timeout: float) -> socket.socket:
+    global _ack_sock
+    if _ack_sock is None:
+        _ack_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+        _ack_sock.bind((INTERFACE, 0))
+    _ack_sock.settimeout(timeout)
+    return _ack_sock
+
 def _send_and_wait_ack(dest_mac: str, frame_bytes: bytes, file_id: bytes, seq: int,
                        retries: int = 5, timeout: float = 1.0) -> bool:
-    """
-    Envía frame_bytes (ya construido) a dest_mac y espera ACK(file_id, seq).
-    Socket temporal AF_PACKET (ETH_P_ALL) con timeout.
-    Devuelve True si se recibió ACK, False si agotó reintentos.
-    """
+    dest_bytes = bytes.fromhex(dest_mac.replace(":", ""))
     for attempt in range(1, retries + 1):
+        s = _get_ack_socket(timeout)
+        # bind/timeout ya hecho; enviar inmediatamente
         send_frame(dest_mac, frame_bytes)
         print(f"[send_ack] enviado seq={seq} attempt={attempt} dest={dest_mac} file_id={file_id.hex()}")
-        s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
-        try:
-            s.bind((INTERFACE, 0))
-            s.settimeout(timeout)
-            start = time.time()
-            while True:
-                try:
-                    raw, _ = s.recvfrom(65535)
-                except socket.timeout:
-                    # timeout interno, salimos para reintentar
-                    break
-                if len(raw) < 14:
-                    continue
-                try:
-                    pkt_type = struct.unpack("!H", raw[12:14])[0]
-                except Exception:
-                    continue
-                # filtrar por nuestro ethertype
-                if pkt_type != ETH_P_LINKCHAT:
-                    continue
-                data = raw[14:]
-                # intento parse header
-                try:
-                    info = parse_header(data)
-                except Exception:
-                    # no es un paquete nuestro (o header corrupto)
-                    continue
-                # debug: mostrar paquetes recibidos por socket temporal
-                if info["type"] == ACK:
-                    print(f"[send_ack] socket temporal recibió ACK id={info['id'].hex()} seq={info['seq']}")
-                if info["type"] == ACK and info["id"] == file_id and info["seq"] == seq:
-                    print(f"[send_ack] ACK CORRECTO recibido seq={seq} (attempt={attempt})")
-                    return True
-                if (time.time() - start) >= timeout:
-                    break
-        finally:
+        start = time.time()
+        while True:
             try:
-                s.close()
+                raw, _ = s.recvfrom(65535)
+            except socket.timeout:
+                break
+            if len(raw) < 14:
+                continue
+            # filtrar por ethertype y por MAC origen dest_bytes (acepta solo respuestas desde el destinatario)
+            pkt_type = struct.unpack("!H", raw[12:14])[0]
+            if pkt_type != ETH_P_LINKCHAT:
+                continue
+            if raw[6:12] != dest_bytes:
+                continue
+            try:
+                info = parse_header(raw[14:])
             except Exception:
-                pass
+                continue
+            if info["type"] == ACK and info["id"] == file_id and info["seq"] == seq:
+                print(f"[send_ack] ACK CORRECTO recibido seq={seq} (attempt={attempt})")
+                return True
+            if (time.time() - start) >= timeout:
+                break
         print(f"[send_ack] no ACK para seq={seq} en attempt={attempt}, reintentando...")
     print(f"[send_ack] agotados {retries} intentos para seq={seq}")
     return False

@@ -154,7 +154,8 @@ def send_files_from_shared():
 
             print(f"[main] Enviando desde copia '{prepared}' -> destino {dest} (use_ack={use_ack})")
             try:
-                send_file(dest, prepared, use_ack=use_ack)
+                # opcional: aumentar retries/timeout para pruebas en redes ruidosas
+                send_file(dest, prepared, use_ack=use_ack, retries=8, timeout=2.0)
                 print(f"[main] Envío finalizado: {orig}")
             except Exception as e:
                 print(f"[main] Error al enviar {orig}: {e}")
