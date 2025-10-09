@@ -137,3 +137,22 @@ def discover_peers(timeout: float = 2.0) -> list:
         except Exception:
             pass
     return list(peers.items())
+
+def send_message_to_all(text: str, discover_timeout: float = 2.0) -> list:
+    """
+    Descubre peers y envía `text` por unicast a cada uno.
+    Devuelve lista de MACs a las que se envió.
+    """
+    sent = []
+    try:
+        peers = discover_peers(timeout=discover_timeout)
+    except Exception:
+        peers = []
+    for mac, name in peers:
+        try:
+            send_message(mac, text)
+            sent.append(mac)
+        except Exception:
+            # ignorar errores por peer para continuar con el resto
+            pass
+    return sent

@@ -1,5 +1,6 @@
 # src/chat.py
 from protocol import send_message, start_message_listener, stop_message_listener
+from messaging import send_message_to_all
 
 def chat_mode():
     print("=== Modo Chat === (escribe /exit para salir)")
@@ -12,6 +13,15 @@ def chat_mode():
             text = input("Tú: ")
             if text == "/exit":
                 break
+            # enviar a todos: /all mensaje  OR /all (pedir mensaje)
+            if text.startswith("/all"):
+                rest = text[4:].strip()
+                if not rest:
+                    rest = input("Mensaje para todos: ").strip()
+                if rest:
+                    sent = send_message_to_all(rest)
+                    print(f"[chat] enviado a {len(sent)} peers")
+                continue
             send_message(text)
     except KeyboardInterrupt:
         pass
