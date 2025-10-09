@@ -64,9 +64,36 @@ def list_shared_files() -> List[Tuple[str,int]]:
     return files
 
 def ask_dest_mac() -> str:
-    txt = input(f"MAC destino (vacío = broadcast {DEFAULT_DEST_MAC}): ").strip()
+    txt = input(f"MAC destino (vacío = broadcast {DEFAULT_DEST_MAC}, 'd' = detectar peers): ").strip()
     if txt == "":
         return DEFAULT_DEST_MAC
+    if txt.lower() == "d":
+        try:
+            from messaging import discover_peers
+        except Exception as e:
+            print("Discovery no disponible:", e)
+            return DEFAULT_DEST_MAC
+        print("Buscando peers en la red (espera unos segundos)...")
+        peers = discover_peers(timeout=2.0)
+        if not peers:
+            print("No se encontraron peers.")
+            return DEFAULT_DEST_MAC
+        print("Peers encontrados:")
+        for i, (mac, name) in enumerate(peers, start=1):
+            print(f"  {i}. {name}  ({mac})")
+        sel = input("Elige peer (#) o Enter para broadcast: ").strip()
+        if sel == "":
+            return DEFAULT_DEST_MAC
+        try:
+            idx = int(sel) - 1
+            if 0 <= idx < len(peers):
+                return peers[idx][0]
+            else:
+                print("Selección inválida, usando broadcast.")
+                return DEFAULT_DEST_MAC
+        except Exception:
+            print("Entrada inválida, usando broadcast.")
+            return DEFAULT_DEST_MAC
     return txt
 
 def _copy_to_tmp_and_prepare(src_path: str) -> str:
@@ -220,6 +247,12 @@ def recv_file_flow():
 def main_menu():
     print(f"Carpeta compartida usada para listar: {SHARED_DIR}")
     print(f"Carpeta temporal para envío: {TMP_SEND_DIR}")
+    # Asegurar que el listener de mensajes esté activo para responder a discovery
+    try:
+        from messaging import start_message_loop
+        start_message_loop(lambda s, t: None)
+    except Exception:
+        pass
 
     while True:
         print("\n=== LinkChat - Menú principal ===")
