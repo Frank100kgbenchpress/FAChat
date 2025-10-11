@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>FRABChat</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+  </head>
+  <body>
+    <!-- Splash Screen -->
+    <div id="splash-screen">
+      <div class="drop"></div>
+      <h1 id="splash-text">FRABChat</h1>
+    </div>
+
+    <!-- Login Container -->
+    <div class="login-container" style="display: none">
+      <div class="login-box">
+        <h1>Iniciar sesión</h1>
+        <form method="POST">
+          <label for="username">Nombre de usuario:</label>
+          <input type="text" name="username" id="username" required />
+
+          <label for="mac">MAC de tu dispositivo:</label>
+          <input
+            type="text"
+            name="mac"
+            id="mac"
+            required
+            placeholder="00:11:22:33:44:55"
+          />
+
+          <button type="submit">Iniciar sesión</button>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+          const splash = document.getElementById('splash-screen');
+
+          // Total animación: 6s (3s gota + 3s texto)
+          setTimeout(() => {
+              splash.style.opacity = 0;
+              setTimeout(() => {
+                  splash.style.display = 'none';
+                  const loggedIn = {{ 'true' if session.get('username') else 'false' }};
+                  if(loggedIn) {
+                      window.location.href = "{{ url_for('chat') }}";
+                  } else {
+                      document.querySelector('.login-container').style.display = 'flex';
+                  }
+              }, 1000);
+          }, 6000);
+      });
+    </script>
+  </body>
+</html>
