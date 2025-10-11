@@ -12,6 +12,7 @@ Nota:
 - Ajusta INTERFACE al nombre de tu interfaz (ver con `ip a`).
 - Requiere permisos para enviar/recibir tramas raw (sudo) excepto para leer la MAC vía /sys.
 """
+
 import socket
 import struct
 import threading
@@ -19,8 +20,8 @@ import time
 from typing import Callable, Optional
 
 # --- CONFIGURA ESTO a la interfaz de tu Mint (ip a para verla) ---
-INTERFACE = "wlp2s0"           # <- AJUSTA AQUÍ SI ES NECESARIO
-ETH_P_LINKCHAT = 0x1234        # EtherType a usar
+INTERFACE = "wlo1"  # <- AJUSTA AQUÍ SI ES NECESARIO
+ETH_P_LINKCHAT = 0x1234  # EtherType a usar
 
 # sockets/estado globales
 _send_sock: Optional[socket.socket] = None
@@ -78,7 +79,9 @@ def send_frame(dest_mac: str, payload: bytes, eth_type: int = ETH_P_LINKCHAT) ->
 
     try:
         sent = _send_sock.send(frame)
-        print(f"[ethernet] enviado {sent} bytes a {dest_mac} (eth_type={hex(eth_type)})")
+        print(
+            f"[ethernet] enviado {sent} bytes a {dest_mac} (eth_type={hex(eth_type)})"
+        )
     except PermissionError:
         print("[ethernet] permiso denegado: ejecuta con sudo")
         raise
@@ -95,9 +98,13 @@ def _ensure_recv_socket(eth_type: int = ETH_P_LINKCHAT):
     global _recv_sock
     if _recv_sock is None:
         # ETH_P_ALL = 0x0003 -> usar ntohs(0x0003) en constructor (convensión común)
-        _recv_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+        _recv_sock = socket.socket(
+            socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003)
+        )
         _recv_sock.bind((INTERFACE, 0))
-        print(f"[ethernet] recv socket creado y ligado a {INTERFACE} (escucha ALL, filtrando por {hex(eth_type)})")
+        print(
+            f"[ethernet] recv socket creado y ligado a {INTERFACE} (escucha ALL, filtrando por {hex(eth_type)})"
+        )
 
 
 def recv_one(eth_type: int = ETH_P_LINKCHAT) -> tuple[str, bytes]:
@@ -154,7 +161,9 @@ def _recv_loop(callback: Callable[[str, bytes], None], eth_type: int):
         _recv_running = False
 
 
-def start_recv_loop(callback: Callable[[str, bytes], None], eth_type: int = ETH_P_LINKCHAT) -> None:
+def start_recv_loop(
+    callback: Callable[[str, bytes], None], eth_type: int = ETH_P_LINKCHAT
+) -> None:
     """
     Lanza un hilo en background que llama callback(src_mac, payload) por cada paquete.
     Espera brevemente hasta confirmar que el loop arrancó.
@@ -163,7 +172,9 @@ def start_recv_loop(callback: Callable[[str, bytes], None], eth_type: int = ETH_
     if _recv_thread and _recv_thread.is_alive():
         print("[ethernet] recv thread ya activo")
         return
-    _recv_thread = threading.Thread(target=_recv_loop, args=(callback, eth_type), daemon=True)
+    _recv_thread = threading.Thread(
+        target=_recv_loop, args=(callback, eth_type), daemon=True
+    )
     _recv_thread.start()
 
     # esperar confirmación de inicio (timeout)
