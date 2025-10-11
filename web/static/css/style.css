@@ -359,3 +359,19 @@ header {
   color: rgba(255, 255, 255, 0.7);
   margin-top: 2px;
 }
+
+/* Agregar esto al final del CSS */
+.timestamp {
+  display: block;
+  font-size: 0.7em;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.messages p.msg-me .timestamp {
+  text-align: right;
+}
+
+.messages p.msg-them .timestamp {
+  text-align: left;
+}

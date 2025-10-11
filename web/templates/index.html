@@ -50,6 +50,10 @@
       </main>
     </div>
 
+    <script>
+      const currentUserMac = "{{ session.mac }}";
+      const currentUsername = "{{ session.username }}";
+    </script>
     <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
   </body>
 </html>

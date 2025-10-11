@@ -1,7 +1,6 @@
 let users = [];
 let currentChat = null;
-let chatMessages = {}; // Para guardar mensajes de cada chat
-let writingState = {}; // mac -> true/false (si está escribiendo)
+let writingState = {};
 
 // Cargar usuarios desde Flask
 function fetchUsers() {
@@ -15,12 +14,12 @@ function fetchUsers() {
         .catch(err => console.error("Error al cargar usuarios:", err));
 }
 
-// Aplicar nombres guardados en localStorage
+// Aplicar nombres guardados
 function applySavedNames() {
     let savedNames = JSON.parse(localStorage.getItem('userNames')) || {};
     users.forEach(user => {
         if(savedNames[user.mac]) user.name = savedNames[user.mac];
-        writingState[user.mac] = false; // Inicialmente todos escuchando
+        writingState[user.mac] = false;
     });
 }
 
@@ -33,9 +32,11 @@ function loadChats() {
         const chatItem = document.createElement("div");
         chatItem.className = "chat-item";
         chatItem.id = "chat-" + index;
-        chatItem.onclick = () => user.status === "listening" && openChat(index);
+        chatItem.setAttribute("data-mac", user.mac);
+        chatItem.onclick = () => openChat(index);
 
         const displayName = user.name ? user.name : "Desconocido";
+        const earIcon = user.listening ? "👂" : "❌👂";
 
         const button = document.createElement("button");
         button.className = "assign-name-btn";
@@ -47,7 +48,7 @@ function loadChats() {
 
         chatItem.innerHTML = `
             <div>
-                <span class="chat-name">${displayName}</span>
+                <span class="chat-name">${displayName} ${earIcon}</span>
                 ${!user.name ? `<small class="chat-mac">${user.mac}</small>` : ""}
             </div>
             <span class="status ${user.status || "listening"}">${user.status || "listening"}</span>
@@ -60,51 +61,72 @@ function loadChats() {
     });
 }
 
-// Abrir un chat con animación y mensajes persistentes
+// Abrir chat - CARGAR MENSAJES DESDE EL SERVIDOR
 function openChat(index) {
     currentChat = users[index];
     const header = document.getElementById("chat-header");
     const displayName = currentChat.name ? currentChat.name : "Desconocido";
-    header.innerHTML = `<h2>${displayName}</h2><p class="status ${currentChat.status || "listening"}">${currentChat.status || "listening"}</p>`;
+    const earIcon = currentChat.listening ? "👂" : "❌👂";
+    header.innerHTML = `<h2>${displayName} ${earIcon}</h2><p class="status ${currentChat.status || "listening"}">${currentChat.status || "listening"}</p>`;
 
     document.getElementById("input-area").style.display = currentChat.status === "offline" ? "none" : "flex";
+
+       // LIMPIAR EL INPUT AL CAMBIAR DE CHAT
+    document.getElementById("message-input").value = "";
 
     document.querySelectorAll(".chat-item").forEach((el, i) => {
         if(i === index) el.classList.add("selected");
         else el.classList.remove("selected");
     });
 
-    // Animación suave: minimizar chat anterior y expandir actual
-    const chatWindow = document.querySelector('.chat-window');
-    chatWindow.style.transform = "scaleY(0.95)";
-    chatWindow.style.opacity = "0.5";
-
-    setTimeout(() => {
-        chatWindow.classList.add('open');
-        chatWindow.style.transform = "scaleY(1)";
-        chatWindow.style.opacity = "1";
-    }, 200);
-
-    // Renderizar mensajes previos del chat
-    renderMessages(currentChat.mac);
+    // Cargar mensajes desde el servidor
+    loadMessages(currentChat.mac);
 }
 
-// Función para renderizar mensajes
-function renderMessages(mac) {
+// CARGAR mensajes desde el servidor
+function loadMessages(otherMac) {
+    fetch(`/get_messages/${otherMac}`)
+        .then(res => res.json())
+        .then(messages => {
+            renderMessages(messages);
+        })
+        .catch(err => console.error("Error al cargar mensajes:", err));
+}
+
+// Renderizar mensajes (VERSIÓN DEFINITIVA CON IDs)
+function renderMessages(messages) {
     const messagesDiv = document.getElementById("messages");
+
+    // Verificar si los mensajes son diferentes usando IDs
+    const currentMessageIds = new Set(Array.from(messagesDiv.querySelectorAll('p')).map(p => p.dataset.messageId));
+    const newMessageIds = new Set(messages.map(m => m.id));
+
+    // Si los conjuntos de IDs son iguales, no hacer nada
+    if (currentMessageIds.size === newMessageIds.size &&
+        [...currentMessageIds].every(id => newMessageIds.has(id))) {
+        return;
+    }
+
+    // Si hay cambios, renderizar todo de nuevo
     messagesDiv.innerHTML = "";
 
-    const msgs = chatMessages[mac] || [];
-    msgs.forEach(m => {
+    messages.forEach(m => {
         const p = document.createElement("p");
-        p.className = m.sender === "me" ? "msg-me" : "msg-them";
-        p.textContent = m.text;
+        const isMyMessage = m.sender === currentUserMac;
+        p.className = isMyMessage ? "msg-me" : "msg-them";
+        p.dataset.messageId = m.id;  // Guardar ID en el elemento
+
+        const timestamp = m.timestamp ? `<small class="timestamp">${m.timestamp}</small>` : '';
+        p.innerHTML = `${m.text} ${timestamp}`;
+
         messagesDiv.appendChild(p);
         setTimeout(() => p.classList.add("show"), 50);
     });
+
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
-// Asignar un nombre a un usuario
+// Asignar nombre
 function assignName(index) {
     const name = prompt("Ingrese un nombre para este dispositivo:");
     if(name) {
@@ -113,68 +135,111 @@ function assignName(index) {
         savedNames[users[index].mac] = name;
         localStorage.setItem('userNames', JSON.stringify(savedNames));
         loadChats();
-    }
-}
 
-// Actualizar estado listening/writing según input
-const input = document.getElementById("message-input");
-input.addEventListener("input", () => {
-    if(currentChat) {
-        writingState[currentChat.mac] = input.value.trim().length > 0;
-        updateUserState(currentChat.mac);
-    }
-});
-
-// Actualizar visualización del estado
-function updateUserState(mac) {
-    const user = users.find(u => u.mac === mac);
-    if(user) {
-        user.status = writingState[mac] ? "writing" : "listening";
-        const chatEl = document.getElementById(`chat-${users.indexOf(user)}`);
-        if(chatEl) {
-            chatEl.querySelector(".status").textContent = user.status;
-            chatEl.querySelector(".status").className = `status ${user.status}`;
+        // Si estamos en el chat de esta persona, actualizar header
+        if(currentChat && currentChat.mac === users[index].mac) {
+            const header = document.getElementById("chat-header");
+            const earIcon = currentChat.listening ? "👂" : "❌👂";
+            header.innerHTML = `<h2>${name} ${earIcon}</h2><p class="status ${currentChat.status || "listening"}">${currentChat.status || "listening"}</p>`;
         }
     }
 }
 
-// Enviar mensaje solo si el otro está listening
-document.getElementById("send-btn").onclick = () => {
+// Función para enviar mensaje (AHORA AL SERVIDOR)
+function sendMessage() {
+    const input = document.getElementById("message-input");
     const text = input.value.trim();
+
     if(!text || !currentChat) return;
 
-    if(currentChat.status !== "listening") {
-        alert(`${currentChat.name || "Desconocido"} no está escuchando en este momento.`);
+    if(!currentChat.listening) {
+        alert(`${currentChat.name || "Usuario"} no está escuchando en este momento.`);
         return;
     }
 
-    // Guardar mensaje en memoria
-    if(!chatMessages[currentChat.mac]) chatMessages[currentChat.mac] = [];
-    chatMessages[currentChat.mac].push({ sender: "me", text: text });
+    // Enviar mensaje al servidor
+    fetch('/send_message', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            other_mac: currentChat.mac,
+            message: text
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if(data.success) {
+            // Recargar mensajes después de enviar
+            loadMessages(currentChat.mac);
+            input.value = "";
+        } else {
+            alert("Error al enviar el mensaje");
+        }
+    })
+    .catch(err => {
+        console.error("Error al enviar mensaje:", err);
+        alert("Error de conexión al enviar mensaje");
+    });
+}
 
-    // Renderizar mensajes del chat
-    renderMessages(currentChat.mac);
+// Botón enviar
+document.getElementById("send-btn").onclick = sendMessage;
 
-    input.value = "";
-    writingState[currentChat.mac] = false;
-    updateUserState(currentChat.mac);
-};
-
-// Enviar mensaje solo con Enter
-input.addEventListener("keydown", (e) => {
+// Enter envía mensaje
+document.getElementById("message-input").addEventListener("keydown", (e) => {
     if(e.key === "Enter") {
         e.preventDefault();
-        document.getElementById("send-btn").click();
+        sendMessage();
     }
 });
 
-// Inicial usuario con menú logout
+// Toggle logout menu
+document.getElementById("user-initial").addEventListener("click", function() {
+    this.classList.toggle("active");
+});
+
+// Cerrar menú al hacer click fuera
+document.addEventListener("click", function(e) {
+    if (!e.target.closest('.user-initial')) {
+        document.getElementById('user-initial').classList.remove('active');
+    }
+});
+
+// Polling mejorado para refrescar usuarios y mensajes
+function startUserPolling() {
+    let isPolling = false;
+
+    setInterval(() => {
+        if (isPolling) return; // Evitar superposición de requests
+
+        isPolling = true;
+        fetch('/get_users')
+            .then(res => res.json())
+            .then(data => {
+                users = data;
+                applySavedNames();
+                loadChats();
+
+                // Si hay un chat abierto, recargar sus mensajes también
+                if(currentChat) {
+                    return fetch(`/get_messages/${currentChat.mac}`)
+                        .then(res => res.json())
+                        .then(messages => {
+                            renderMessages(messages);
+                        });
+                }
+            })
+            .catch(err => console.error(err))
+            .finally(() => {
+                isPolling = false;
+            });
+    }, 3000); // Aumentado a 3 segundos
+}
+
+// Inicialización
 document.addEventListener("DOMContentLoaded", () => {
     fetchUsers();
-
-    const userInitial = document.getElementById("user-initial");
-    userInitial.addEventListener("click", () => userInitial.classList.toggle("active"));
-    document.addEventListener("click", (e) => {
-        if(!userInitial.contains(e.target)) userInitial.classList.remove("active");
-    });
+    startUserPolling();
 });
