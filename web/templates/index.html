@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>FRABChat</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+  </head>
+  <body>
+    <header>
+      <h1>FRABChat</h1>
+      <div class="user-initial" id="user-initial">
+        {{ username[0]|upper }}
+        <div class="logout-menu" id="logout-menu">
+          <a href="{{ url_for('logout') }}">Cerrar sesión</a>
+        </div>
+      </div>
+    </header>
+
+    <div class="container">
+      <aside class="sidebar">
+        <div class="user-info">
+          <h2>{{ username }}</h2>
+          <p>MAC: {{ mac }}</p>
+        </div>
+
+        <!-- Botón Chat Grupal -->
+        <div class="group-chat-item" id="group-chat">
+          <div class="chat-name">💬 Chat Grupal (Todos)</div>
+          <span class="status online">online</span>
+        </div>
+
+        <div class="chat-list" id="chat-list">
+          <!-- Chats individuales se cargarán dinámicamente -->
+        </div>
+      </aside>
+
+      <main class="chat-window">
+        <div class="chat-header" id="chat-header">
+          <p>Selecciona un chat para comenzar</p>
+        </div>
+        <div class="messages" id="messages"></div>
+        <div class="input-area" id="input-area" style="display: none">
+          <input
+            type="text"
+            placeholder="Escribe un mensaje..."
+            id="message-input"
+          />
+          <button id="send-btn">Enviar</button>
+          <button id="file-btn" class="file-button">📎 Archivo</button>
+          <input type="file" id="file-input" style="display: none" />
+        </div>
+      </main>
+    </div>
+
+    <script>
+      const currentUserMac = "{{ session.mac }}";
+      const currentUsername = "{{ session.username }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+  </body>
+</html>
