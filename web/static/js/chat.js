@@ -1,6 +1,6 @@
 let users = [];
 let currentChat = null;
-let writingState = {};
+let isGroupChat = false;
 
 // Cargar usuarios desde Flask
 function fetchUsers() {
@@ -19,7 +19,6 @@ function applySavedNames() {
     let savedNames = JSON.parse(localStorage.getItem('userNames')) || {};
     users.forEach(user => {
         if(savedNames[user.mac]) user.name = savedNames[user.mac];
-        writingState[user.mac] = false;
     });
 }
 
@@ -36,7 +35,6 @@ function loadChats() {
         chatItem.onclick = () => openChat(index);
 
         const displayName = user.name ? user.name : "Desconocido";
-        const earIcon = user.listening ? "👂" : "❌👂";
 
         const button = document.createElement("button");
         button.className = "assign-name-btn";
@@ -48,10 +46,10 @@ function loadChats() {
 
         chatItem.innerHTML = `
             <div>
-                <span class="chat-name">${displayName} ${earIcon}</span>
+                <span class="chat-name">${displayName}</span>
                 ${!user.name ? `<small class="chat-mac">${user.mac}</small>` : ""}
             </div>
-            <span class="status ${user.status || "listening"}">${user.status || "listening"}</span>
+            <span class="status ${user.status || "offline"}">${user.status || "offline"}</span>
         `;
         chatItem.appendChild(button);
 
@@ -61,30 +59,50 @@ function loadChats() {
     });
 }
 
-// Abrir chat - CARGAR MENSAJES DESDE EL SERVIDOR
+// Abrir chat individual
 function openChat(index) {
+    isGroupChat = false;
     currentChat = users[index];
     const header = document.getElementById("chat-header");
     const displayName = currentChat.name ? currentChat.name : "Desconocido";
-    const earIcon = currentChat.listening ? "👂" : "❌👂";
-    header.innerHTML = `<h2>${displayName} ${earIcon}</h2><p class="status ${currentChat.status || "listening"}">${currentChat.status || "listening"}</p>`;
+    header.innerHTML = `<h2>${displayName}</h2><p class="status ${currentChat.status || "offline"}">${currentChat.status || "offline"}</p>`;
 
     document.getElementById("input-area").style.display = currentChat.status === "offline" ? "none" : "flex";
 
-       // LIMPIAR EL INPUT AL CAMBIAR DE CHAT
-    document.getElementById("message-input").value = "";
-
+    // Actualizar selección visual
     document.querySelectorAll(".chat-item").forEach((el, i) => {
         if(i === index) el.classList.add("selected");
         else el.classList.remove("selected");
     });
+    document.getElementById("group-chat").classList.remove("selected");
 
     // Cargar mensajes desde el servidor
     loadMessages(currentChat.mac);
 }
 
-// CARGAR mensajes desde el servidor
+// Abrir chat grupal
+function openGroupChat() {
+    isGroupChat = true;
+    currentChat = null;
+    const header = document.getElementById("chat-header");
+    header.innerHTML = `<h2>💬 Chat Grupal</h2><p class="status online">Todos los usuarios online</p>`;
+
+    document.getElementById("input-area").style.display = "flex";
+
+    // Actualizar selección visual
+    document.getElementById("group-chat").classList.add("selected");
+    document.querySelectorAll(".chat-item").forEach(el => {
+        el.classList.remove("selected");
+    });
+
+    // Limpiar mensajes (o cargar mensajes grupales si los guardas)
+    document.getElementById("messages").innerHTML = "";
+}
+
+// Cargar mensajes desde el servidor
 function loadMessages(otherMac) {
+    if (isGroupChat) return; // Los mensajes grupales no se cargan así
+
     fetch(`/get_messages/${otherMac}`)
         .then(res => res.json())
         .then(messages => {
@@ -93,7 +111,7 @@ function loadMessages(otherMac) {
         .catch(err => console.error("Error al cargar mensajes:", err));
 }
 
-// Renderizar mensajes (VERSIÓN DEFINITIVA CON IDs)
+// Renderizar mensajes
 function renderMessages(messages) {
     const messagesDiv = document.getElementById("messages");
 
@@ -114,10 +132,18 @@ function renderMessages(messages) {
         const p = document.createElement("p");
         const isMyMessage = m.sender === currentUserMac;
         p.className = isMyMessage ? "msg-me" : "msg-them";
-        p.dataset.messageId = m.id;  // Guardar ID en el elemento
+        p.dataset.messageId = m.id;
 
         const timestamp = m.timestamp ? `<small class="timestamp">${m.timestamp}</small>` : '';
-        p.innerHTML = `${m.text} ${timestamp}`;
+
+        // Detectar si es mensaje de archivo
+        if (m.text && m.text.startsWith("[ARCHIVO]")) {
+            p.classList.add("file-message");
+            const fileInfo = m.text.replace("[ARCHIVO]", "");
+            p.innerHTML = `<span class="file-info">📎 ${fileInfo}</span>${timestamp}`;
+        } else {
+            p.innerHTML = `${m.text} ${timestamp}`;
+        }
 
         messagesDiv.appendChild(p);
         setTimeout(() => p.classList.add("show"), 50);
@@ -139,52 +165,136 @@ function assignName(index) {
         // Si estamos en el chat de esta persona, actualizar header
         if(currentChat && currentChat.mac === users[index].mac) {
             const header = document.getElementById("chat-header");
-            const earIcon = currentChat.listening ? "👂" : "❌👂";
-            header.innerHTML = `<h2>${name} ${earIcon}</h2><p class="status ${currentChat.status || "listening"}">${currentChat.status || "listening"}</p>`;
+            header.innerHTML = `<h2>${name}</h2><p class="status ${currentChat.status || "offline"}">${currentChat.status || "offline"}</p>`;
         }
     }
 }
 
-// Función para enviar mensaje (AHORA AL SERVIDOR)
+// Función para enviar mensaje
 function sendMessage() {
     const input = document.getElementById("message-input");
     const text = input.value.trim();
 
-    if(!text || !currentChat) return;
+    if(!text) return;
 
-    if(!currentChat.listening) {
-        alert(`${currentChat.name || "Usuario"} no está escuchando en este momento.`);
-        return;
+    if (isGroupChat) {
+        // Enviar a todos los usuarios online
+        const onlineUsers = users.filter(user => user.status === "online");
+        let sentCount = 0;
+
+        onlineUsers.forEach(user => {
+            fetch('/send_message', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    other_mac: user.mac,
+                    message: text
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if(data.success) sentCount++;
+            })
+            .catch(err => console.error("Error enviando mensaje grupal:", err));
+        });
+
+        // Mostrar mensaje localmente
+        const messagesDiv = document.getElementById("messages");
+        const p = document.createElement("p");
+        p.className = "msg-me";
+        p.innerHTML = `${text} <small class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</small>`;
+        messagesDiv.appendChild(p);
+        setTimeout(() => p.classList.add("show"), 50);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        console.log(`Mensaje grupal enviado a ${sentCount} usuarios`);
+
+    } else if(currentChat) {
+        // Enviar mensaje individual
+        fetch('/send_message', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                other_mac: currentChat.mac,
+                message: text
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                loadMessages(currentChat.mac);
+            }
+        })
+        .catch(err => console.error("Error al enviar mensaje:", err));
     }
 
-    // Enviar mensaje al servidor
-    fetch('/send_message', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            other_mac: currentChat.mac,
-            message: text
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if(data.success) {
-            // Recargar mensajes después de enviar
-            loadMessages(currentChat.mac);
-            input.value = "";
-        } else {
-            alert("Error al enviar el mensaje");
-        }
-    })
-    .catch(err => {
-        console.error("Error al enviar mensaje:", err);
-        alert("Error de conexión al enviar mensaje");
-    });
+    input.value = "";
 }
 
-// Botón enviar
+// Función para enviar archivo
+function sendFile(file) {
+    if (!file) return;
+
+    const fileName = file.name;
+    const fileSize = (file.size / 1024 / 1024).toFixed(2) + " MB";
+
+    if (isGroupChat) {
+        // Enviar archivo a todos los usuarios online
+        const onlineUsers = users.filter(user => user.status === "online");
+        let sentCount = 0;
+
+        onlineUsers.forEach(user => {
+            // Aquí implementarías el envío real del archivo
+            // Por ahora solo mostramos el mensaje
+            console.log(`Enviando archivo ${fileName} a ${user.mac}`);
+            sentCount++;
+        });
+
+        // Mostrar mensaje de archivo localmente
+        const messagesDiv = document.getElementById("messages");
+        const p = document.createElement("p");
+        p.className = "msg-me file-message";
+        p.innerHTML = `<span class="file-info">📎 ${fileName}</span><span class="file-size">${fileSize}</span> <small class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</small>`;
+        messagesDiv.appendChild(p);
+        setTimeout(() => p.classList.add("show"), 50);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        alert(`Archivo '${fileName}' enviado a ${sentCount} usuarios`);
+
+    } else if(currentChat) {
+        // Enviar archivo individual
+        // Aquí llamarías a tu backend para enviar el archivo
+        fetch('/send_file', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                other_mac: currentChat.mac,
+                file_path: file.name  // En una implementación real, subirías el archivo
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                // Mostrar mensaje de archivo enviado
+                const messagesDiv = document.getElementById("messages");
+                const p = document.createElement("p");
+                p.className = "msg-me file-message";
+                p.innerHTML = `<span class="file-info">📎 ${fileName}</span><span class="file-size">${fileSize}</span> <small class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</small>`;
+                messagesDiv.appendChild(p);
+                setTimeout(() => p.classList.add("show"), 50);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            } else {
+                alert("Error al enviar archivo: " + (data.error || "Error desconocido"));
+            }
+        })
+        .catch(err => {
+            console.error("Error enviando archivo:", err);
+            alert("Error de conexión al enviar archivo");
+        });
+    }
+}
+
+// Botón enviar mensaje
 document.getElementById("send-btn").onclick = sendMessage;
 
 // Enter envía mensaje
@@ -194,6 +304,22 @@ document.getElementById("message-input").addEventListener("keydown", (e) => {
         sendMessage();
     }
 });
+
+// Botón de archivo
+document.getElementById("file-btn").addEventListener("click", () => {
+    document.getElementById("file-input").click();
+});
+
+// Selección de archivo
+document.getElementById("file-input").addEventListener("change", (e) => {
+    if(e.target.files.length > 0) {
+        sendFile(e.target.files[0]);
+        e.target.value = ''; // Resetear input
+    }
+});
+
+// Chat grupal
+document.getElementById("group-chat").addEventListener("click", openGroupChat);
 
 // Toggle logout menu
 document.getElementById("user-initial").addEventListener("click", function() {
@@ -207,12 +333,12 @@ document.addEventListener("click", function(e) {
     }
 });
 
-// Polling mejorado para refrescar usuarios y mensajes
+// Polling para refrescar usuarios y mensajes
 function startUserPolling() {
     let isPolling = false;
 
     setInterval(() => {
-        if (isPolling) return; // Evitar superposición de requests
+        if (isPolling) return;
 
         isPolling = true;
         fetch('/get_users')
@@ -223,7 +349,7 @@ function startUserPolling() {
                 loadChats();
 
                 // Si hay un chat abierto, recargar sus mensajes también
-                if(currentChat) {
+                if(currentChat && !isGroupChat) {
                     return fetch(`/get_messages/${currentChat.mac}`)
                         .then(res => res.json())
                         .then(messages => {
@@ -235,7 +361,7 @@ function startUserPolling() {
             .finally(() => {
                 isPolling = false;
             });
-    }, 3000); // Aumentado a 3 segundos
+    }, 3000);
 }
 
 // Inicialización

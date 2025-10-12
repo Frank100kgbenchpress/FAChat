@@ -1,9 +1,4 @@
 # src/files.py
-"""
-Transferencia de archivos para LinkChat (stop-and-wait con ACKs).
-
-Incluye prints de depuración para traza de chunks/ACKs.
-"""
 import os
 import hashlib
 import threading
@@ -12,8 +7,23 @@ import socket
 import struct
 from typing import Callable, Optional, Dict, Tuple
 
-from protocol import build_header, parse_header, FILE_START, FILE_CHUNK, FILE_END, ACK, new_file_id
-from ethernet import send_frame, start_recv_loop, stop_recv_loop, ETH_P_LINKCHAT, INTERFACE
+from protocol import (
+    build_header,
+    parse_header,
+    FILE_START,
+    FILE_CHUNK,
+    FILE_END,
+    ACK,
+    new_file_id,
+    FILE_CHANNEL,
+)
+from ethernet import (
+    send_frame,
+    start_recv_loop,
+    stop_recv_loop,
+    ETH_P_LINKCHAT,
+    INTERFACE,
+)
 
 CHUNK_SIZE = 1000
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
@@ -36,23 +46,29 @@ def _safe_meta_decode(payload: bytes) -> Tuple[str, int]:
         return "received_file", 0
 
 
-
 def _get_ack_socket(timeout: float) -> socket.socket:
     global _ack_sock
     if _ack_sock is None:
-        _ack_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+        _ack_sock = socket.socket(
+            socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003)
+        )
         _ack_sock.bind((INTERFACE, 0))
     _ack_sock.settimeout(timeout)
     return _ack_sock
 
-def _send_and_wait_ack(dest_mac: str, frame_bytes: bytes, file_id: bytes, seq: int,
-                       retries: int = 5, timeout: float = 1.0) -> bool:
+
+def _send_and_wait_ack(
+    dest_mac: str,
+    frame_bytes: bytes,
+    file_id: bytes,
+    seq: int,
+    retries: int = 5,
+    timeout: float = 1.0,
+) -> bool:
     dest_bytes = bytes.fromhex(dest_mac.replace(":", ""))
     for attempt in range(1, retries + 1):
         s = _get_ack_socket(timeout)
-        # bind/timeout ya hecho; enviar inmediatamente
         send_frame(dest_mac, frame_bytes)
-        print(f"[send_ack] enviado seq={seq} attempt={attempt} dest={dest_mac} file_id={file_id.hex()}")
         start = time.time()
         while True:
             try:
@@ -61,7 +77,6 @@ def _send_and_wait_ack(dest_mac: str, frame_bytes: bytes, file_id: bytes, seq: i
                 break
             if len(raw) < 14:
                 continue
-            # filtrar por ethertype y por MAC origen dest_bytes (acepta solo respuestas desde el destinatario)
             pkt_type = struct.unpack("!H", raw[12:14])[0]
             if pkt_type != ETH_P_LINKCHAT:
                 continue
@@ -72,18 +87,21 @@ def _send_and_wait_ack(dest_mac: str, frame_bytes: bytes, file_id: bytes, seq: i
             except Exception:
                 continue
             if info["type"] == ACK and info["id"] == file_id and info["seq"] == seq:
-                print(f"[send_ack] ACK CORRECTO recibido seq={seq} (attempt={attempt})")
                 return True
             if (time.time() - start) >= timeout:
                 break
-        print(f"[send_ack] no ACK para seq={seq} en attempt={attempt}, reintentando...")
-    print(f"[send_ack] agotados {retries} intentos para seq={seq}")
     return False
 
 
-def send_file(dest_mac: str, path: str, use_ack: bool = True, retries: int = 5, timeout: float = 1.0) -> None:
+def send_file(
+    dest_mac: str,
+    path: str,
+    use_ack: bool = True,
+    retries: int = 5,
+    timeout: float = 1.0,
+) -> None:
     """
-    Envía un archivo con STOP-AND-WAIT.
+    Envía un archivo con STOP-AND-WAIT por canal FILE_CHANNEL.
     """
     if not dest_mac:
         dest_mac = BROADCAST_MAC
@@ -96,8 +114,9 @@ def send_file(dest_mac: str, path: str, use_ack: bool = True, retries: int = 5, 
     file_id = new_file_id()
 
     meta = filename_bytes.decode("utf-8", errors="replace") + "|" + str(filesize)
-    pkt_start = build_header(FILE_START, meta.encode("utf-8"), seq=0, file_id=file_id)
-    print(f"[send] FILE_START file_id={file_id.hex()} name={filename_bytes.decode()} size={filesize}")
+    pkt_start = build_header(
+        FILE_START, meta.encode("utf-8"), channel=FILE_CHANNEL, seq=0, file_id=file_id
+    )
     send_frame(dest_mac, pkt_start)
     time.sleep(0.05)
 
@@ -107,12 +126,17 @@ def send_file(dest_mac: str, path: str, use_ack: bool = True, retries: int = 5, 
             chunk = f.read(CHUNK_SIZE)
             if not chunk:
                 break
-            print(f"[send] preparando seq={seq} len={len(chunk)}")
-            pkt = build_header(FILE_CHUNK, chunk, seq=seq, file_id=file_id)
+            pkt = build_header(
+                FILE_CHUNK, chunk, channel=FILE_CHANNEL, seq=seq, file_id=file_id
+            )
             if use_ack:
-                ok = _send_and_wait_ack(dest_mac, pkt, file_id, seq, retries=retries, timeout=timeout)
+                ok = _send_and_wait_ack(
+                    dest_mac, pkt, file_id, seq, retries=retries, timeout=timeout
+                )
                 if not ok:
-                    raise TimeoutError(f"No ACK para seq={seq} después de {retries} intentos")
+                    raise TimeoutError(
+                        f"No ACK para seq={seq} después de {retries} intentos"
+                    )
             else:
                 send_frame(dest_mac, pkt)
             seq += 1
@@ -121,8 +145,13 @@ def send_file(dest_mac: str, path: str, use_ack: bool = True, retries: int = 5, 
     with open(path, "rb") as fh:
         for b in iter(lambda: fh.read(65536), b""):
             sha256.update(b)
-    pkt_end = build_header(FILE_END, sha256.hexdigest().encode("utf-8"), seq=seq, file_id=file_id)
-    print(f"[send] FILE_END file_id={file_id.hex()} seq={seq} sha256={sha256.hexdigest()}")
+    pkt_end = build_header(
+        FILE_END,
+        sha256.hexdigest().encode("utf-8"),
+        channel=FILE_CHANNEL,
+        seq=seq,
+        file_id=file_id,
+    )
     send_frame(dest_mac, pkt_end)
 
 
@@ -134,7 +163,6 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
     try:
         info = parse_header(raw_payload)
     except Exception:
-        # paquete no parseable
         return
 
     typ = info["type"]
@@ -142,12 +170,8 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
     payload = info["payload"]
     seq = info["seq"]
 
-    # convertir fid a hex para debug
-    fid_hex = fid.hex()
-
     with _lock:
         if typ == FILE_START:
-            # reinicio si ya estaba
             if fid in _in_progress:
                 try:
                     _in_progress[fid]["handle"].close()
@@ -166,34 +190,23 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
             try:
                 fh = open(outname, "wb")
             except Exception as e:
-                print(f"[recv] ERROR al abrir {outname}: {e}")
                 return
             _in_progress[fid] = {
                 "path": outname,
                 "handle": fh,
                 "expected": expected,
-                "received": 0
+                "received": 0,
             }
-            print(f"[recv] FILE_START from={src_mac} file_id={fid_hex} name={fname} expected={expected} -> out={outname}")
             if _user_cb:
                 _user_cb(src_mac, outname, "started")
 
         elif typ == FILE_CHUNK:
             if fid not in _in_progress:
-                print(f"[recv] FILE_CHUNK recibido para file_id={fid_hex} pero no hay metadata; ignorando")
                 return
             entry = _in_progress[fid]
             try:
                 entry["handle"].write(payload)
                 entry["received"] += len(payload)
-                print(f"[recv] FILE_CHUNK from={src_mac} file_id={fid_hex} seq={seq} len={len(payload)} total_received={entry['received']}/{entry['expected']}")
-                # chequeo básico de orden (stop-and-wait debería mantener orden)
-                # expected_seq aproximado:
-                expected_seq = (entry["received"] - len(payload)) // CHUNK_SIZE + 1
-                if seq != expected_seq and entry["expected"] > 0:
-                    # Este chequeo es heurístico, imprime advertencia si detecta desorden
-                    print(f"[recv][WARN] posible desorden: esperado_seq~{expected_seq} recibido_seq={seq} (file_id={fid_hex})")
-                # si ya recibimos todo lo esperado, cerrar
                 if entry["expected"] and entry["received"] >= entry["expected"]:
                     try:
                         entry["handle"].close()
@@ -203,51 +216,40 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
                         _user_cb(src_mac, entry["path"], "completed")
                     _in_progress.pop(fid, None)
             except Exception as e:
-                print(f"[recv] ERROR escribiendo chunk seq={seq} file_id={fid_hex}: {e}")
                 if _user_cb:
                     _user_cb(src_mac, entry.get("path", "unknown"), f"error:{e}")
                 return
             # enviar ACK para este seq
             try:
-                ack_pkt = build_header(ACK, b"", seq=seq, file_id=fid)
+                ack_pkt = build_header(
+                    ACK, b"", channel=FILE_CHANNEL, seq=seq, file_id=fid
+                )
                 send_frame(src_mac, ack_pkt)
-                print(f"[recv] enviado ACK seq={seq} file_id={fid_hex} a {src_mac}")
-            except Exception as e:
-                print(f"[recv] error enviando ACK seq={seq} file_id={fid_hex}: {e}")
+            except Exception:
+                pass
 
         elif typ == FILE_END:
             if fid not in _in_progress:
-                print(f"[recv] FILE_END recibido para file_id={fid_hex} pero no hay entrada en progreso")
                 return
             entry = _in_progress[fid]
             try:
                 entry["handle"].close()
             except Exception:
                 pass
-            # calcular hash local y comparar
             remote_hash = payload.decode("utf-8", errors="replace")
             local_path = entry["path"]
-            local_size = 0
-            try:
-                local_size = os.path.getsize(local_path)
-            except Exception:
-                pass
             sha256 = hashlib.sha256()
             try:
                 with open(local_path, "rb") as fh:
                     for b in iter(lambda: fh.read(65536), b""):
                         sha256.update(b)
                 local_hash = sha256.hexdigest()
-            except Exception as e:
+            except Exception:
                 local_hash = None
-                print(f"[recv] ERROR calculando hash local: {e}")
 
             status = "finished"
             if remote_hash and local_hash and remote_hash != local_hash:
-                status = f"finished_hash_mismatch remote={remote_hash} local={local_hash}"
-                print(f"[recv] HASH MISMATCH file_id={fid_hex} remote={remote_hash} local={local_hash}")
-            else:
-                print(f"[recv] FILE_END file_id={fid_hex} local_size={local_size} expected={entry.get('expected')} local_hash={local_hash}")
+                status = "finished_hash_mismatch"
 
             if _user_cb:
                 _user_cb(src_mac, entry["path"], status)
@@ -290,4 +292,3 @@ def receive_file_blocking() -> Tuple[Optional[str], Optional[str]]:
     event.wait()
     stop_file_loop()
     return result["src"], result["path"]
-

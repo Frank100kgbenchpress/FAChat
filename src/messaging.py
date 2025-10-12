@@ -1,13 +1,5 @@
 # src/messaging.py
-"""
-Mensajería sobre LinkChat (usa protocol + ethernet).
-Exporta:
-- send_message(dest_mac, text)
-- receive_message_blocking() -> (src_mac, text)
-- start_message_loop(user_callback) -> background callback(src_mac, text)
-- stop_message_loop()
-"""
-from protocol import build_header, parse_header, MSG
+from protocol import build_header, parse_header, MSG, CHAT_CHANNEL
 from ethernet import send_frame, recv_one, start_recv_loop, stop_recv_loop
 from typing import Callable, Optional
 import socket
@@ -15,18 +7,20 @@ import struct
 import time
 import os
 from ethernet import INTERFACE, ETH_P_LINKCHAT
- 
+
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 DISCOVER_REQ = "__LINKCHAT_DISCOVER_REQ__"
 DISCOVER_REPLY_PREFIX = "__LINKCHAT_DISCOVER_RPLY__|"
- 
+
+
 def send_message(dest_mac: str, text: str, seq: int = 0) -> None:
     if not dest_mac:
         dest_mac = BROADCAST_MAC
     payload = text.encode("utf-8")
-    pkt = build_header(MSG, payload, seq=seq)
+    pkt = build_header(MSG, payload, channel=CHAT_CHANNEL, seq=seq)
     send_frame(dest_mac, pkt)
- 
+
+
 def receive_message_blocking() -> tuple[str, str]:
     """
     Bloqueante: espera y devuelve (src_mac, text) si llega un MSG.
@@ -41,13 +35,14 @@ def receive_message_blocking() -> tuple[str, str]:
             text = info["payload"].decode("utf-8", errors="replace")
             return src_mac, text
 
+
 # Background loop
 _message_loop_callback: Optional[Callable[[str, str], None]] = None
+
 
 def _internal_cb(src_mac: str, raw_payload: bytes):
     """
     Procesa mensajes entrantes. Siempre responde a DISCOVER_REQ (unicast reply).
-    Si hay callback de usuario, lo llama con los mensajes normales.
     """
     global _message_loop_callback
     try:
@@ -82,14 +77,17 @@ def _internal_cb(src_mac: str, raw_payload: bytes):
         except Exception as e:
             print(f"[messaging] error en callback del usuario: {e}")
 
+
 def start_message_loop(user_callback: Callable[[str, str], None]) -> None:
     global _message_loop_callback
     _message_loop_callback = user_callback
     start_recv_loop(_internal_cb)
 
+
 def stop_message_loop() -> None:
     stop_recv_loop()
- 
+
+
 def discover_peers(timeout: float = 2.0) -> list:
     """
     Envía petición de discovery (broadcast) y escucha replies durante `timeout` segundos.
@@ -129,7 +127,7 @@ def discover_peers(timeout: float = 2.0) -> list:
             except Exception:
                 continue
             if text.startswith(DISCOVER_REPLY_PREFIX):
-                name = text[len(DISCOVER_REPLY_PREFIX):]
+                name = text[len(DISCOVER_REPLY_PREFIX) :]
                 peers[src_mac] = name
     finally:
         try:
@@ -137,6 +135,7 @@ def discover_peers(timeout: float = 2.0) -> list:
         except Exception:
             pass
     return list(peers.items())
+
 
 def send_message_to_all(text: str, discover_timeout: float = 2.0) -> list:
     """
@@ -153,6 +152,5 @@ def send_message_to_all(text: str, discover_timeout: float = 2.0) -> list:
             send_message(mac, text)
             sent.append(mac)
         except Exception:
-            # ignorar errores por peer para continuar con el resto
             pass
     return sent

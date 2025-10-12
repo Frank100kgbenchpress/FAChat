@@ -27,17 +27,13 @@
           <label for="username">Nombre de usuario:</label>
           <input type="text" name="username" id="username" required />
 
-          <label for="mac">MAC de tu dispositivo:</label>
-          <input
-            type="text"
-            name="mac"
-            id="mac"
-            required
-            placeholder="00:11:22:33:44:55"
-          />
+          <!-- ELIMINADO: Campo MAC -->
 
           <button type="submit">Iniciar sesión</button>
         </form>
+        <p style="margin-top: 15px; font-size: 0.9em; opacity: 0.8">
+          Tu dirección MAC se detectará automáticamente
+        </p>
       </div>
     </div>
 
@@ -45,7 +41,6 @@
       document.addEventListener("DOMContentLoaded", () => {
           const splash = document.getElementById('splash-screen');
 
-          // Total animación: 6s (3s gota + 3s texto)
           setTimeout(() => {
               splash.style.opacity = 0;
               setTimeout(() => {
