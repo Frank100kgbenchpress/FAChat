@@ -15,15 +15,18 @@ def detect_interface() -> str:
     """
     # Si existe /.dockerenv, estamos dentro de un contenedor Docker
     if os.path.exists("/.dockerenv"):
+        print("Interfaz eth0")
         return "eth0"
 
     # En máquina real: tratar de detectar automáticamente una interfaz válida
-    candidates = ["wlo1", "wlx", "enp3s0", "eth0"]
+    candidates = ["wlo1", "wlx", "enp3s0", "eth0", "enp1s0", "wlp2s0"]
     for iface in candidates:
+        print(f"Buscando interfaz {iface}")
         path = f"/sys/class/net/{iface}"
         if os.path.exists(path):
+            print(f"Encontrado interfaz,{iface}")
             return iface
-
+    print("No encontro ninguna interfaz")
     # Si no se encuentra ninguna válida, lanzar error
     raise RuntimeError("No se pudo detectar una interfaz de red válida.")
 
@@ -108,6 +111,7 @@ def _ensure_recv_socket(eth_type: int = ETH_P_LINKCHAT):
 
 
 def recv_one(eth_type: int = ETH_P_LINKCHAT) -> tuple[str, bytes]:
+    print("recv_one")
     """Bloqueante: espera y devuelve (src_mac_str, payload) del primer paquete con eth_type."""
     _ensure_recv_socket(eth_type)
     while True:
@@ -177,6 +181,7 @@ def start_recv_loop(
     callback: Callable[[str, bytes], None], eth_type: int = ETH_P_LINKCHAT
 ) -> None:
     """Lanza un hilo en background que llama callback(src_mac, payload) por cada paquete."""
+    print("Recibiendo mensajes")
     global _recv_thread, _recv_running
     if _recv_thread and _recv_thread.is_alive():
         return

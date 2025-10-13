@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700&display=swap');
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
 
 body {
   margin: 0;
@@ -319,7 +320,10 @@ header {
   font-size: 0.9em;
 }
 
-.messages p {
+/* ==================== ESTILOS PARA MENSAJES ==================== */
+
+/* Mensajes de texto normales */
+.messages .message {
   margin: 5px 0;
   padding: 8px 12px;
   border-radius: 15px;
@@ -329,22 +333,110 @@ header {
   transition: all 0.3s ease;
 }
 
-.messages p.show {
+.messages .message.show {
   opacity: 1;
   transform: translateY(0);
 }
 
-.messages p.msg-me {
+.messages .message.msg-me {
   background: #87CEFA;
   align-self: flex-end;
   color: #000;
 }
 
-.messages p.msg-them {
+.messages .message.msg-them {
   background: #e0e0e0;
   align-self: flex-start;
   color: #000;
 }
+
+/* Mensajes de archivo */
+.file-message-container {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  border: 1px solid #e9ecef;
+  max-width: 280px;
+  margin: 5px 0;
+}
+
+.file-icon {
+  font-size: 24px;
+  color: #6c757d;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.file-name {
+  font-weight: 500;
+  word-break: break-word;
+  color: #495057;
+  font-size: 14px;
+  margin-right: 10px;
+}
+
+.file-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.download-btn {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 8px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.download-btn:hover {
+  background: #0056b3;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Estilos para mensajes propios de archivo */
+.msg-me .file-message-container {
+  background: #007bff;
+  border-color: #007bff;
+}
+
+.msg-me .file-icon {
+  color: white;
+}
+
+.msg-me .file-name {
+  color: white;
+}
+
+.msg-me .download-btn {
+  background: white;
+  color: #007bff;
+}
+
+.msg-me .download-btn:hover {
+  background: #f8f9fa;
+}
+
+/* ==================== ÁREA DE ENTRADA Y TIMESTAMPS ==================== */
 
 .input-area {
   display: flex;
@@ -391,7 +483,6 @@ header {
   margin-top: 2px;
 }
 
-/* Agregar esto al final del CSS */
 .timestamp {
   display: block;
   font-size: 0.7em;
@@ -399,12 +490,43 @@ header {
   margin-top: 2px;
 }
 
-.messages p.msg-me .timestamp {
+.messages .message.msg-me .timestamp {
   text-align: right;
 }
 
-.messages p.msg-them .timestamp {
+.messages .message.msg-them .timestamp {
   text-align: left;
+}
+
+/* ==================== ESTILOS OBSOLETOS (MANTENER POR COMPATIBILIDAD) ==================== */
+/* Estos estilos son para la versión anterior de mensajes de archivo */
+/* Puedes eliminarlos una vez que confirmes que funciona el nuevo diseño */
+
+.messages p {
+  margin: 5px 0;
+  padding: 8px 12px;
+  border-radius: 15px;
+  max-width: 70%;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.3s ease;
+}
+
+.messages p.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.messages p.msg-me {
+  background: #87CEFA;
+  align-self: flex-end;
+  color: #000;
+}
+
+.messages p.msg-them {
+  background: #e0e0e0;
+  align-self: flex-start;
+  color: #000;
 }
 
 .file-message {

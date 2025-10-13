@@ -1,7 +1,9 @@
+from datetime import datetime
 import threading
 import time
 from typing import Dict, List, Callable, Optional
 import os
+import uuid
 
 
 class NetworkManager:
@@ -10,6 +12,7 @@ class NetworkManager:
         self.my_mac = None
         self.on_peers_updated: Optional[Callable] = None
         self.running = False
+        self.chat_messages = {}
         self._import_backend_modules()
 
     def _import_backend_modules(self):
@@ -18,7 +21,7 @@ class NetworkManager:
 
             sys.path.append("/app/src")
 
-            from messaging import discover_peers, send_message
+            from messaging import discover_peers, send_message, start_message_loop
             from files import send_file, start_file_loop, stop_file_loop
             from ethernet import send_frame, start_recv_loop, stop_recv_loop
 
@@ -31,12 +34,72 @@ class NetworkManager:
                 "send_frame": send_frame,
                 "start_recv_loop": start_recv_loop,
                 "stop_recv_loop": stop_recv_loop,
+                "start_message_loop": start_message_loop,
             }
             self.backend_available = True
         except ImportError as e:
             print(f"Backend modules not available: {e}")
             self.backend_available = False
             self.backend = {}
+
+    def rec_messages(self, other_mac: str, message_text: str) -> None:
+        DISCOVER_REQ = "__LINKCHAT_DISCOVER_REQ__"
+        DISCOVER_REPLY_PREFIX = "__LINKCHAT_DISCOVER_RPLY__|"
+        print(
+            f"Recibiendo mensaje de {other_mac} a {self.my_mac} con el mensaje {message_text}"
+        )
+
+        if (
+            other_mac == self.my_mac
+            or message_text.startswith(DISCOVER_REPLY_PREFIX)
+            or message_text.startswith(DISCOVER_REQ)
+            or other_mac == "ff:ff:ff:ff:ff:ff"
+        ):
+            return
+        chat_id = "-".join(sorted([self.my_mac, other_mac]))
+        if chat_id not in self.chat_messages:
+            self.chat_messages[chat_id] = []
+        new_message = {
+            "id": str(uuid.uuid4()),
+            "sender": other_mac,
+            "text": message_text,
+            "timestamp": datetime.now().strftime("%H:%M"),
+        }
+        self.chat_messages[chat_id].append(new_message)
+
+    def rec_file(self, src_mac: str, file_path: str, status: str) -> None:
+        """Maneja la recepción de archivos"""
+        print(f"Recibiendo archivo de {src_mac} en {file_path} con estado {status}")
+
+        if status == "completed" or status == "finished":
+            # Usar la ruta ABSOLUTA que viene del files.py
+            absolute_path = os.path.abspath(file_path)
+            filename = os.path.basename(absolute_path)
+            display_name = filename.replace("recv_", "", 1)
+
+            # Si el display_name tiene UUID, extraer solo el nombre real
+            if "_" in display_name and len(display_name.split("_")) > 1:
+                # Formato: "uuid_nombrearchivo" -> quedarse con "nombrearchivo"
+                parts = display_name.split("_", 1)
+                if len(parts) > 1:
+                    display_name = parts[1]
+
+            chat_id = "-".join(sorted([self.my_mac, src_mac]))
+            if chat_id not in self.chat_messages:
+                self.chat_messages[chat_id] = []
+
+            file_message = {
+                "id": str(uuid.uuid4()),
+                "sender": src_mac,
+                "text": f"[ARCHIVO]{display_name}",
+                "file_path": absolute_path,  # ← RUTA ABSOLUTA CORRECTA
+                "filename": display_name,
+                "timestamp": datetime.now().strftime("%H:%M"),
+                "type": "file",
+            }
+            self.chat_messages[chat_id].append(file_message)
+            print(f"✅ Mensaje de archivo añadido: {display_name}")
+            print(f"📁 Ruta guardada: {absolute_path}")
 
     def start(self, my_mac: str):
         print(f"Starting NetworkManager with MAC: {my_mac}")
@@ -49,6 +112,7 @@ class NetworkManager:
         self.my_mac = my_mac
         self.running = True
         self._start_discovery_polling()
+        self.backend["start_message_loop"](self.rec_messages)
         self._start_file_receiver()
         print(f"NetworkManager iniciado para MAC: {my_mac}")
 
@@ -104,7 +168,7 @@ class NetworkManager:
 
     def _start_file_receiver(self):
         def file_callback(src_mac: str, path: str, status: str):
-            print(f"Archivo recibido de {src_mac}: {path} - {status}")
+            self.rec_file(src_mac, path, status)
 
         if self.backend_available:
             self.backend["start_file_loop"](file_callback)

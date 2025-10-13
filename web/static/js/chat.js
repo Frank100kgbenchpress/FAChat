@@ -116,7 +116,7 @@ function renderMessages(messages) {
     const messagesDiv = document.getElementById("messages");
 
     // Verificar si los mensajes son diferentes usando IDs
-    const currentMessageIds = new Set(Array.from(messagesDiv.querySelectorAll('p')).map(p => p.dataset.messageId));
+    const currentMessageIds = new Set(Array.from(messagesDiv.querySelectorAll('.message')).map(div => div.dataset.messageId));
     const newMessageIds = new Set(messages.map(m => m.id));
 
     // Si los conjuntos de IDs son iguales, no hacer nada
@@ -129,27 +129,69 @@ function renderMessages(messages) {
     messagesDiv.innerHTML = "";
 
     messages.forEach(m => {
-        const p = document.createElement("p");
+        const messageElement = document.createElement("div");
         const isMyMessage = m.sender === currentUserMac;
-        p.className = isMyMessage ? "msg-me" : "msg-them";
-        p.dataset.messageId = m.id;
+        messageElement.className = `message ${isMyMessage ? 'msg-me' : 'msg-them'}`;
+        messageElement.dataset.messageId = m.id;
 
         const timestamp = m.timestamp ? `<small class="timestamp">${m.timestamp}</small>` : '';
 
         // Detectar si es mensaje de archivo
-        if (m.text && m.text.startsWith("[ARCHIVO]")) {
-            p.classList.add("file-message");
-            const fileInfo = m.text.replace("[ARCHIVO]", "");
-            p.innerHTML = `<span class="file-info">📎 ${fileInfo}</span>${timestamp}`;
+        if (m.type === 'file' || (m.text && m.text.startsWith("[ARCHIVO]"))) {
+            messageElement.classList.add("file-message");
+            const filename = m.filename || m.text.replace("[ARCHIVO]", "");
+            const fileExtension = filename.split('.').pop().toLowerCase();
+
+            // Iconos por tipo de archivo
+            const fileIcons = {
+                'pdf': 'fa-file-pdf',
+                'doc': 'fa-file-word',
+                'docx': 'fa-file-word',
+                'txt': 'fa-file-alt',
+                'zip': 'fa-file-archive',
+                'rar': 'fa-file-archive',
+                'jpg': 'fa-file-image',
+                'jpeg': 'fa-file-image',
+                'png': 'fa-file-image',
+                'gif': 'fa-file-image',
+                'mp4': 'fa-file-video',
+                'mp3': 'fa-file-audio'
+            };
+
+            const fileIcon = fileIcons[fileExtension] || 'fa-file';
+
+            messageElement.innerHTML = `
+                <div class="file-message-container ${isMyMessage ? 'own-file' : 'other-file'}">
+                    <div class="file-icon">
+                        <i class="fas ${fileIcon}"></i>
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name">${filename}</div>
+                        <div class="file-actions">
+                            <button onclick="downloadFile('${m.id}')" class="download-btn">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                ${timestamp}
+            `;
         } else {
-            p.innerHTML = `${m.text} ${timestamp}`;
+            // Mensaje de texto normal
+            messageElement.innerHTML = `${m.text} ${timestamp}`;
         }
 
-        messagesDiv.appendChild(p);
-        setTimeout(() => p.classList.add("show"), 50);
+        messagesDiv.appendChild(messageElement);
+        setTimeout(() => messageElement.classList.add("show"), 50);
     });
 
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+// Añade esta función para descargar archivos
+function downloadFile(fileId) {
+    // Abrir en nueva pestaña para descargar
+    window.open(`/download_file/${fileId}`, '_blank');
 }
 
 // Asignar nombre
@@ -262,15 +304,13 @@ function sendFile(file) {
         alert(`Archivo '${fileName}' enviado a ${sentCount} usuarios`);
 
     } else if(currentChat) {
-        // Enviar archivo individual
-        // Aquí llamarías a tu backend para enviar el archivo
-        fetch('/send_file', {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('other_mac', currentChat.mac);
+
+        fetch('/upload_file', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                other_mac: currentChat.mac,
-                file_path: file.name  // En una implementación real, subirías el archivo
-            })
+            body: formData
         })
         .then(res => res.json())
         .then(data => {

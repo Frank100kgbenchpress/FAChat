@@ -1,5 +1,16 @@
-from flask import Flask, render_template, request, redirect, session, url_for, jsonify
+import tempfile
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    session,
+    url_for,
+    jsonify,
+    send_file,
+)
 from datetime import datetime
+from werkzeug.utils import secure_filename
 import threading
 import uuid
 import os
@@ -16,11 +27,43 @@ print("=" * 50, flush=True)
 from network_manager import NetworkManager
 from ethernet import get_interface_mac, INTERFACE
 
-app = Flask(__name__)
-app.secret_key = "temp_key_initial"
+
+def create_app():
+    app = Flask(__name__)
+    # Read from env; NEVER set inside request handlers
+    app.secret_key = os.environ["SECRET_KEY"]  # e.g., a 32+ random bytes
+    app.config["SESSION_COOKIE_NAME"] = os.environ.get(
+        "SESSION_COOKIE_NAME", "session_app"
+    )
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = False  # True si vas por HTTPS
+    return app
+
+
+app = create_app()
+
+UPLOAD_FOLDER = tempfile.gettempdir()  # Usar carpeta temporal del sistema
+ALLOWED_EXTENSIONS = set(
+    [
+        "txt",
+        "pdf",
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "doc",
+        "docx",
+        "zip",
+        "rar",
+        "mp4",
+        "mp3",
+    ]
+)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 
 network_manager = NetworkManager()
-chat_messages = {}
+chat_messages = network_manager.chat_messages
 
 # 🔹 Obtener MAC: primero env var, si no existe, la interfaz física
 mac_env = os.getenv("MY_MAC")
@@ -42,18 +85,25 @@ except Exception as e:
 print(f"[INIT] MAC final del contenedor: {CONTAINER_MAC}", flush=True)
 
 
+def allowed_file(filename):
+    """Verifica si la extensión del archivo está permitida"""
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
 @app.route("/", methods=["GET", "POST"])
 def login():
     print(f"[LOGIN] Método: {request.method}", flush=True)
 
     if request.method == "POST":
         username = request.form.get("username")
-        print(f"[LOGIN] Usuario intentando login: {username}", flush=True)
+        print(
+            f"[LOGIN] Usuario intentando login: {username}, {CONTAINER_MAC}", flush=True
+        )
 
         if username:
             session["username"] = username
             session["mac"] = CONTAINER_MAC
-            app.secret_key = f"secret_key_{CONTAINER_MAC.replace(':', '')}"
+            # app.secret_key = f"secret_key_{CONTAINER_MAC.replace(':', '')}"
 
             print(
                 f"[LOGIN] ✅ Login exitoso - Usuario: {username}, MAC: {CONTAINER_MAC}",
@@ -153,38 +203,110 @@ def send_message():
         return jsonify({"success": False, "error": str(e)})
 
 
-@app.route("/send_file", methods=["POST"])
-def send_file():
+@app.route("/upload_file", methods=["POST"])
+def upload_file():
+    """
+    Endpoint CORREGIDO para recibir y enviar archivos.
+    Recibe el archivo real vía FormData, lo guarda temporalmente,
+    lo envía por red y luego lo elimina.
+    """
     my_mac = session.get("mac")
-    data = request.json
-    other_mac = data.get("other_mac")
-    file_path = data.get("file_path")
 
-    print(
-        f"[API] send_file - De: {my_mac}, Para: {other_mac}, File: {file_path}",
-        flush=True,
-    )
+    # Validar sesión
+    if not my_mac:
+        return jsonify({"success": False, "error": "Sesión no válida"}), 401
 
-    if not my_mac or not other_mac or not file_path:
-        return jsonify({"success": False})
+    # Obtener datos del formulario
+    other_mac = request.form.get("other_mac")
+
+    # Verificar que el archivo esté en la petición
+    if "file" not in request.files:
+        return jsonify({"success": False, "error": "No se encontró el archivo"}), 400
+
+    file = request.files["file"]
+
+    # Verificar que se seleccionó un archivo
+    if file.filename == "":
+        return jsonify(
+            {"success": False, "error": "No se seleccionó ningún archivo"}
+        ), 400
+
+    # Validar datos requeridos
+    if not other_mac:
+        return jsonify(
+            {"success": False, "error": "MAC de destino no especificada"}
+        ), 400
 
     try:
-        network_manager.send_file(other_mac, file_path)
+        # Guardar archivo temporalmente con nombre seguro
+        filename = secure_filename(file.filename)
+        temp_path = os.path.join(
+            app.config["UPLOAD_FOLDER"], f"{uuid.uuid4()}_{filename}"
+        )
+
+        print(f"[send_file] Guardando archivo temporal: {temp_path}", flush=True)
+        file.save(temp_path)
+
+        # Verificar que el archivo se guardó correctamente
+        if not os.path.exists(temp_path):
+            return jsonify(
+                {"success": False, "error": "Error al guardar archivo temporal"}
+            ), 500
+
+        file_size = os.path.getsize(temp_path)
+        print(
+            f"[send_file] Archivo guardado: {filename} ({file_size} bytes)", flush=True
+        )
+
+        # Enviar archivo por red
+        print(f"[send_file] Enviando archivo a {other_mac}...", flush=True)
+        network_manager.send_file(other_mac, temp_path)
+        print("[send_file] ✅ Archivo enviado correctamente", flush=True)
+
+        # Guardar referencia en chat_messages
         chat_id = "-".join(sorted([my_mac, other_mac]))
         if chat_id not in chat_messages:
             chat_messages[chat_id] = []
+
         file_message = {
             "id": str(uuid.uuid4()),
             "sender": my_mac,
-            "text": f"[ARCHIVO]{file_path}",
+            "text": f"[ARCHIVO]{filename}",
             "timestamp": datetime.now().strftime("%H:%M"),
         }
         chat_messages[chat_id].append(file_message)
-        print("[API] ✅ Archivo enviado correctamente", flush=True)
-        return jsonify({"success": True})
+
+        # # Limpiar archivo temporal
+        # try:
+        #     os.remove(temp_path)
+        #     print(f"[send_file] Archivo temporal eliminado: {temp_path}", flush=True)
+        # except Exception as e:
+        #     print(
+        #         f"[send_file] ⚠️ No se pudo eliminar archivo temporal: {e}", flush=True
+        #     )
+
+        return jsonify({"success": True, "filename": filename})
+
+    except FileNotFoundError as e:
+        print(f"[send_file] ❌ Archivo no encontrado: {e}", flush=True)
+        return jsonify(
+            {"success": False, "error": f"Archivo no encontrado: {str(e)}"}
+        ), 404
+
     except Exception as e:
-        print(f"[API] ❌ Error enviando archivo: {e}", flush=True)
-        return jsonify({"success": False, "error": str(e)})
+        print(f"[send_file] ❌ Error enviando archivo: {e}", flush=True)
+        import traceback
+
+        traceback.print_exc()
+
+        # Intentar limpiar archivo temporal en caso de error
+        try:
+            if "temp_path" in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception:
+            pass
+
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/logout")
@@ -196,6 +318,68 @@ def logout():
         pass
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/download_file/<file_id>")
+def download_file(file_id):
+    """Descargar archivo por ID del mensaje"""
+    try:
+        print(f"[DOWNLOAD] Solicitado archivo con ID: {file_id}", flush=True)
+
+        # Buscar el archivo en todos los chats
+        for chat_id, messages in network_manager.chat_messages.items():
+            for message in messages:
+                if message.get("id") == file_id and (
+                    message.get("type") == "file"
+                    or message.get("text", "").startswith("[ARCHIVO]")
+                ):
+                    filename = message.get("filename", "archivo_descargado")
+
+                    print(f"[DOWNLOAD] Encontrado mensaje: {filename}", flush=True)
+
+                    # BUSCAR EL ARCHIVO EN /app/ POR NOMBRE
+                    import glob
+
+                    # Buscar archivos que coincidan con el patrón
+                    search_patterns = [
+                        f"/app/recv_*{filename}",
+                        f"/app/*{filename}*",
+                        f"/app/{filename}",
+                    ]
+
+                    for pattern in search_patterns:
+                        for file_path in glob.glob(pattern):
+                            if os.path.exists(file_path):
+                                print(
+                                    f"[DOWNLOAD] ✅ Enviando archivo: {file_path}",
+                                    flush=True,
+                                )
+
+                                # Opción 1: Sin as_attachment (descarga en navegador)
+                                # return send_file(file_path)
+
+                                # Opción 2: Forzar descarga con headers
+                                response = send_file(file_path)
+                                response.headers["Content-Disposition"] = (
+                                    f"attachment; filename={filename}"
+                                )
+                                return response
+
+                    print(
+                        f"[DOWNLOAD] ❌ No se encontró archivo para: {filename}",
+                        flush=True,
+                    )
+                    return "Archivo no encontrado", 404
+
+        print(f"[DOWNLOAD] ❌ Mensaje no encontrado para ID: {file_id}", flush=True)
+        return "Mensaje no encontrado", 404
+
+    except Exception as e:
+        print(f"[DOWNLOAD] ❌ Error: {e}", flush=True)
+        import traceback
+
+        traceback.print_exc()
+        return "Error al descargar archivo", 500
 
 
 if __name__ == "__main__":
