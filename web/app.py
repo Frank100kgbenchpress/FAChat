@@ -1,5 +1,14 @@
 import tempfile
-from flask import Flask, render_template, request, redirect, session, url_for, jsonify
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    session,
+    url_for,
+    jsonify,
+    send_file,
+)
 from datetime import datetime
 from werkzeug.utils import secure_filename
 import threading
@@ -194,8 +203,8 @@ def send_message():
         return jsonify({"success": False, "error": str(e)})
 
 
-@app.route("/send_file", methods=["POST"])
-def send_file():
+@app.route("/upload_file", methods=["POST"])
+def upload_file():
     """
     Endpoint CORREGIDO para recibir y enviar archivos.
     Recibe el archivo real vía FormData, lo guarda temporalmente,
@@ -267,14 +276,14 @@ def send_file():
         }
         chat_messages[chat_id].append(file_message)
 
-        # Limpiar archivo temporal
-        try:
-            os.remove(temp_path)
-            print(f"[send_file] Archivo temporal eliminado: {temp_path}", flush=True)
-        except Exception as e:
-            print(
-                f"[send_file] ⚠️ No se pudo eliminar archivo temporal: {e}", flush=True
-            )
+        # # Limpiar archivo temporal
+        # try:
+        #     os.remove(temp_path)
+        #     print(f"[send_file] Archivo temporal eliminado: {temp_path}", flush=True)
+        # except Exception as e:
+        #     print(
+        #         f"[send_file] ⚠️ No se pudo eliminar archivo temporal: {e}", flush=True
+        #     )
 
         return jsonify({"success": True, "filename": filename})
 
@@ -309,6 +318,68 @@ def logout():
         pass
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/download_file/<file_id>")
+def download_file(file_id):
+    """Descargar archivo por ID del mensaje"""
+    try:
+        print(f"[DOWNLOAD] Solicitado archivo con ID: {file_id}", flush=True)
+
+        # Buscar el archivo en todos los chats
+        for chat_id, messages in network_manager.chat_messages.items():
+            for message in messages:
+                if message.get("id") == file_id and (
+                    message.get("type") == "file"
+                    or message.get("text", "").startswith("[ARCHIVO]")
+                ):
+                    filename = message.get("filename", "archivo_descargado")
+
+                    print(f"[DOWNLOAD] Encontrado mensaje: {filename}", flush=True)
+
+                    # BUSCAR EL ARCHIVO EN /app/ POR NOMBRE
+                    import glob
+
+                    # Buscar archivos que coincidan con el patrón
+                    search_patterns = [
+                        f"/app/recv_*{filename}",
+                        f"/app/*{filename}*",
+                        f"/app/{filename}",
+                    ]
+
+                    for pattern in search_patterns:
+                        for file_path in glob.glob(pattern):
+                            if os.path.exists(file_path):
+                                print(
+                                    f"[DOWNLOAD] ✅ Enviando archivo: {file_path}",
+                                    flush=True,
+                                )
+
+                                # Opción 1: Sin as_attachment (descarga en navegador)
+                                # return send_file(file_path)
+
+                                # Opción 2: Forzar descarga con headers
+                                response = send_file(file_path)
+                                response.headers["Content-Disposition"] = (
+                                    f"attachment; filename={filename}"
+                                )
+                                return response
+
+                    print(
+                        f"[DOWNLOAD] ❌ No se encontró archivo para: {filename}",
+                        flush=True,
+                    )
+                    return "Archivo no encontrado", 404
+
+        print(f"[DOWNLOAD] ❌ Mensaje no encontrado para ID: {file_id}", flush=True)
+        return "Mensaje no encontrado", 404
+
+    except Exception as e:
+        print(f"[DOWNLOAD] ❌ Error: {e}", flush=True)
+        import traceback
+
+        traceback.print_exc()
+        return "Error al descargar archivo", 500
 
 
 if __name__ == "__main__":

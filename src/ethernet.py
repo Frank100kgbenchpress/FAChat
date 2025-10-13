@@ -19,7 +19,7 @@ def detect_interface() -> str:
         return "eth0"
 
     # En máquina real: tratar de detectar automáticamente una interfaz válida
-    candidates = ["wlo1", "wlx", "enp3s0", "eth0"]
+    candidates = ["wlo1", "wlx", "enp3s0", "eth0", "enp1s0", "wlp2s0"]
     for iface in candidates:
         print(f"Buscando interfaz {iface}")
         path = f"/sys/class/net/{iface}"

@@ -68,14 +68,21 @@ class NetworkManager:
         self.chat_messages[chat_id].append(new_message)
 
     def rec_file(self, src_mac: str, file_path: str, status: str) -> None:
-        # Maneja la recepción de archivos, similar a rec_messages
+        """Maneja la recepción de archivos"""
         print(f"Recibiendo archivo de {src_mac} en {file_path} con estado {status}")
 
-        # Solo procesar cuando el archivo se completa
         if status == "completed" or status == "finished":
-            # Extraer nombre del archivo sin el prefijo "recv_"
-            filename = os.path.basename(file_path)
+            # Usar la ruta ABSOLUTA que viene del files.py
+            absolute_path = os.path.abspath(file_path)
+            filename = os.path.basename(absolute_path)
             display_name = filename.replace("recv_", "", 1)
+
+            # Si el display_name tiene UUID, extraer solo el nombre real
+            if "_" in display_name and len(display_name.split("_")) > 1:
+                # Formato: "uuid_nombrearchivo" -> quedarse con "nombrearchivo"
+                parts = display_name.split("_", 1)
+                if len(parts) > 1:
+                    display_name = parts[1]
 
             chat_id = "-".join(sorted([self.my_mac, src_mac]))
             if chat_id not in self.chat_messages:
@@ -85,13 +92,14 @@ class NetworkManager:
                 "id": str(uuid.uuid4()),
                 "sender": src_mac,
                 "text": f"[ARCHIVO]{display_name}",
-                "file_path": file_path,
+                "file_path": absolute_path,  # ← RUTA ABSOLUTA CORRECTA
                 "filename": display_name,
                 "timestamp": datetime.now().strftime("%H:%M"),
                 "type": "file",
             }
             self.chat_messages[chat_id].append(file_message)
-            print(f"✅ Mensaje de archivo añadido al chat: {display_name}")
+            print(f"✅ Mensaje de archivo añadido: {display_name}")
+            print(f"📁 Ruta guardada: {absolute_path}")
 
     def start(self, my_mac: str):
         print(f"Starting NetworkManager with MAC: {my_mac}")
