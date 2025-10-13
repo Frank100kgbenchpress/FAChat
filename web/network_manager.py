@@ -1,7 +1,9 @@
+from datetime import datetime
 import threading
 import time
 from typing import Dict, List, Callable, Optional
 import os
+import uuid
 
 
 class NetworkManager:
@@ -10,6 +12,7 @@ class NetworkManager:
         self.my_mac = None
         self.on_peers_updated: Optional[Callable] = None
         self.running = False
+        self.chat_messages = {}
         self._import_backend_modules()
 
     def _import_backend_modules(self):
@@ -39,6 +42,31 @@ class NetworkManager:
             self.backend_available = False
             self.backend = {}
 
+    def rec_messages(self, other_mac: str, message_text: str) -> None:
+        DISCOVER_REQ = "__LINKCHAT_DISCOVER_REQ__"
+        DISCOVER_REPLY_PREFIX = "__LINKCHAT_DISCOVER_RPLY__|"
+        print(
+            f"Recibiendo mensaje de {other_mac} a {self.my_mac} con el mensaje {message_text}"
+        )
+
+        if (
+            other_mac == self.my_mac
+            or message_text.startswith(DISCOVER_REPLY_PREFIX)
+            or message_text.startswith(DISCOVER_REQ)
+            or other_mac == "ff:ff:ff:ff:ff:ff"
+        ):
+            return
+        chat_id = "-".join(sorted([self.my_mac, other_mac]))
+        if chat_id not in self.chat_messages:
+            self.chat_messages[chat_id] = []
+        new_message = {
+            "id": str(uuid.uuid4()),
+            "sender": other_mac,
+            "text": message_text,
+            "timestamp": datetime.now().strftime("%H:%M"),
+        }
+        self.chat_messages[chat_id].append(new_message)
+
     def start(self, my_mac: str):
         print(f"Starting NetworkManager with MAC: {my_mac}")
 
@@ -50,7 +78,7 @@ class NetworkManager:
         self.my_mac = my_mac
         self.running = True
         self._start_discovery_polling()
-        self.backend["start_message_loop"](lambda s, t: None)
+        self.backend["start_message_loop"](self.rec_messages)
         self._start_file_receiver()
         print(f"NetworkManager iniciado para MAC: {my_mac}")
 

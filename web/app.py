@@ -20,7 +20,7 @@ app = Flask(__name__)
 app.secret_key = "temp_key_initial"
 
 network_manager = NetworkManager()
-chat_messages = {}
+chat_messages = network_manager.chat_messages
 
 # 🔹 Obtener MAC: primero env var, si no existe, la interfaz física
 mac_env = os.getenv("MY_MAC")
@@ -48,7 +48,9 @@ def login():
 
     if request.method == "POST":
         username = request.form.get("username")
-        print(f"[LOGIN] Usuario intentando login: {username}", flush=True)
+        print(
+            f"[LOGIN] Usuario intentando login: {username}, {CONTAINER_MAC}", flush=True
+        )
 
         if username:
             session["username"] = username
@@ -117,7 +119,10 @@ def get_messages(other_mac):
 
 @app.route("/send_message", methods=["POST"])
 def send_message():
-    my_mac = session.get("mac")
+    mac_bytes = get_interface_mac(INTERFACE)
+    CONTAINER_MAC = ":".join(f"{b:02x}" for b in mac_bytes)
+    print(f"send_message {CONTAINER_MAC}")
+    my_mac = session.get("mac", CONTAINER_MAC)
     data = request.json
     other_mac = data.get("other_mac")
     message_text = data.get("message")
