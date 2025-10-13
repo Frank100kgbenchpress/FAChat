@@ -18,7 +18,7 @@ class NetworkManager:
 
             sys.path.append("/app/src")
 
-            from messaging import discover_peers, send_message
+            from messaging import discover_peers, send_message, start_message_loop
             from files import send_file, start_file_loop, stop_file_loop
             from ethernet import send_frame, start_recv_loop, stop_recv_loop
 
@@ -31,6 +31,7 @@ class NetworkManager:
                 "send_frame": send_frame,
                 "start_recv_loop": start_recv_loop,
                 "stop_recv_loop": stop_recv_loop,
+                "start_message_loop": start_message_loop,
             }
             self.backend_available = True
         except ImportError as e:
@@ -49,6 +50,7 @@ class NetworkManager:
         self.my_mac = my_mac
         self.running = True
         self._start_discovery_polling()
+        self.backend["start_message_loop"](lambda s, t: None)
         self._start_file_receiver()
         print(f"NetworkManager iniciado para MAC: {my_mac}")
 
@@ -97,7 +99,7 @@ class NetworkManager:
                 except Exception as e:
                     print(f"Error en discovery: {e}")
 
-                time.sleep(3)
+                time.sleep(30)
 
         thread = threading.Thread(target=discovery_loop, daemon=True)
         thread.start()

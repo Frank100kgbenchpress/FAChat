@@ -14,6 +14,7 @@ DISCOVER_REPLY_PREFIX = "__LINKCHAT_DISCOVER_RPLY__|"
 
 
 def send_message(dest_mac: str, text: str, seq: int = 0) -> None:
+    print("Mandando mensaje")
     if not dest_mac:
         dest_mac = BROADCAST_MAC
     payload = text.encode("utf-8")
@@ -25,6 +26,7 @@ def receive_message_blocking() -> tuple[str, str]:
     """
     Bloqueante: espera y devuelve (src_mac, text) si llega un MSG.
     """
+    print("receive_message_blocking")
     while True:
         src_mac, raw = recv_one()
         try:
@@ -79,6 +81,7 @@ def _internal_cb(src_mac: str, raw_payload: bytes):
 
 
 def start_message_loop(user_callback: Callable[[str, str], None]) -> None:
+    print("start_message_loop")
     global _message_loop_callback
     _message_loop_callback = user_callback
     start_recv_loop(_internal_cb)
@@ -93,6 +96,7 @@ def discover_peers(timeout: float = 2.0) -> list:
     Envía petición de discovery (broadcast) y escucha replies durante `timeout` segundos.
     Devuelve lista de (mac, name).
     """
+    print("Estoy buscando lso peers")
     peers = {}
     s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
     try:

@@ -361,7 +361,7 @@ function startUserPolling() {
             .finally(() => {
                 isPolling = false;
             });
-    }, 3000);
+    }, 60000);
 }
 
 // Inicialización
