@@ -81,10 +81,17 @@ def _internal_cb(src_mac: str, raw_payload: bytes):
 
 
 def start_message_loop(user_callback: Callable[[str, str], None]) -> None:
-    print("start_message_loop")
     global _message_loop_callback
     _message_loop_callback = user_callback
-    start_recv_loop(_internal_cb)
+
+    # En lugar de start_recv_loop(_internal_cb)
+    # Registrar callback para CHAT_CHANNEL
+    from ethernet import register_channel_callback
+
+    register_channel_callback(CHAT_CHANNEL, _internal_cb)
+
+    # Iniciar recv_loop solo una vez (con un callback dummy)
+    start_recv_loop(lambda src, payload: None)  # El routing se hace por canales
 
 
 def stop_message_loop() -> None:

@@ -262,15 +262,13 @@ function sendFile(file) {
         alert(`Archivo '${fileName}' enviado a ${sentCount} usuarios`);
 
     } else if(currentChat) {
-        // Enviar archivo individual
-        // Aquí llamarías a tu backend para enviar el archivo
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('other_mac', currentChat.mac);
+
         fetch('/send_file', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                other_mac: currentChat.mac,
-                file_path: file.name  // En una implementación real, subirías el archivo
-            })
+            body: formData
         })
         .then(res => res.json())
         .then(data => {
@@ -361,7 +359,7 @@ function startUserPolling() {
             .finally(() => {
                 isPolling = false;
             });
-    }, 60000);
+    }, 3000);
 }
 
 // Inicialización

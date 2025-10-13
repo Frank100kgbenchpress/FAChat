@@ -103,9 +103,11 @@ def send_file(
     """
     Envía un archivo con STOP-AND-WAIT por canal FILE_CHANNEL.
     """
+    print(f"send_file hacai {dest_mac} en {path}")
     if not dest_mac:
         dest_mac = BROADCAST_MAC
     if not os.path.isfile(path):
+        print("FileNotFound")
         raise FileNotFoundError(path)
 
     filesize = os.path.getsize(path)
@@ -259,8 +261,15 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
 def start_file_loop(user_callback: Callable[[str, str, str], None]) -> None:
     global _user_cb, _recv_started
     _user_cb = user_callback
+
     if not _recv_started:
-        start_recv_loop(_file_recv_internal)
+        # Registrar callback para FILE_CHANNEL
+        from ethernet import register_channel_callback
+
+        register_channel_callback(FILE_CHANNEL, _file_recv_internal)
+
+        # Iniciar recv_loop solo una vez
+        start_recv_loop(lambda src, payload: None)
         _recv_started = True
 
 

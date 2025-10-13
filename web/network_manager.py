@@ -67,6 +67,32 @@ class NetworkManager:
         }
         self.chat_messages[chat_id].append(new_message)
 
+    def rec_file(self, src_mac: str, file_path: str, status: str) -> None:
+        # Maneja la recepción de archivos, similar a rec_messages
+        print(f"Recibiendo archivo de {src_mac} en {file_path} con estado {status}")
+
+        # Solo procesar cuando el archivo se completa
+        if status == "completed" or status == "finished":
+            # Extraer nombre del archivo sin el prefijo "recv_"
+            filename = os.path.basename(file_path)
+            display_name = filename.replace("recv_", "", 1)
+
+            chat_id = "-".join(sorted([self.my_mac, src_mac]))
+            if chat_id not in self.chat_messages:
+                self.chat_messages[chat_id] = []
+
+            file_message = {
+                "id": str(uuid.uuid4()),
+                "sender": src_mac,
+                "text": f"[ARCHIVO]{display_name}",
+                "file_path": file_path,
+                "filename": display_name,
+                "timestamp": datetime.now().strftime("%H:%M"),
+                "type": "file",
+            }
+            self.chat_messages[chat_id].append(file_message)
+            print(f"✅ Mensaje de archivo añadido al chat: {display_name}")
+
     def start(self, my_mac: str):
         print(f"Starting NetworkManager with MAC: {my_mac}")
 
@@ -127,14 +153,14 @@ class NetworkManager:
                 except Exception as e:
                     print(f"Error en discovery: {e}")
 
-                time.sleep(30)
+                time.sleep(3)
 
         thread = threading.Thread(target=discovery_loop, daemon=True)
         thread.start()
 
     def _start_file_receiver(self):
         def file_callback(src_mac: str, path: str, status: str):
-            print(f"Archivo recibido de {src_mac}: {path} - {status}")
+            self.rec_file(src_mac, path, status)
 
         if self.backend_available:
             self.backend["start_file_loop"](file_callback)

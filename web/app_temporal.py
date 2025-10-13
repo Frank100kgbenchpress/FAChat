@@ -1,4 +1,3 @@
-import tempfile
 from flask import Flask, render_template, request, redirect, session, url_for, jsonify
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -6,33 +5,18 @@ import threading
 import uuid
 import os
 import sys
-import time
+import tempfile
 
 # 🔹 Agregar src al path
 sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
 
-print("=" * 50, flush=True)
-print("🚀 INICIANDO FACHAT APPLICATION", flush=True)
-print("=" * 50, flush=True)
-
 from network_manager import NetworkManager
 from ethernet import get_interface_mac, INTERFACE
 
+app = Flask(__name__)
+app.secret_key = "temp_key_initial"
 
-def create_app():
-    app = Flask(__name__)
-    # Read from env; NEVER set inside request handlers
-    app.secret_key = os.environ["SECRET_KEY"]  # e.g., a 32+ random bytes
-    app.config["SESSION_COOKIE_NAME"] = os.environ.get(
-        "SESSION_COOKIE_NAME", "session_app"
-    )
-    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    app.config["SESSION_COOKIE_SECURE"] = False  # True si vas por HTTPS
-    return app
-
-
-app = create_app()
-
+# Configuración para subida de archivos
 UPLOAD_FOLDER = tempfile.gettempdir()  # Usar carpeta temporal del sistema
 ALLOWED_EXTENSIONS = set(
     [
@@ -51,29 +35,22 @@ ALLOWED_EXTENSIONS = set(
     ]
 )
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100MB máximo
 
 network_manager = NetworkManager()
-chat_messages = network_manager.chat_messages
+chat_messages = {}
 
 # 🔹 Obtener MAC: primero env var, si no existe, la interfaz física
 mac_env = os.getenv("MY_MAC")
-print(f"[INIT] MY_MAC env var: {mac_env}", flush=True)
-
-# if mac_env:
-#     CONTAINER_MAC = mac_env
-#     print(f"[INIT] Usando MAC de variable de entorno: {CONTAINER_MAC}", flush=True)
-# else:
-try:
-    print(f"[INIT] Intentando obtener MAC de interfaz: {INTERFACE}", flush=True)
-    mac_bytes = get_interface_mac(INTERFACE)
-    CONTAINER_MAC = ":".join(f"{b:02x}" for b in mac_bytes)
-    print(f"[INIT] MAC obtenida de interfaz: {CONTAINER_MAC}", flush=True)
-except Exception as e:
-    CONTAINER_MAC = "00:00:00:00:00:00"
-    print(f"[INIT] ⚠️ Error obteniendo MAC: {e}", flush=True)
-
-print(f"[INIT] MAC final del contenedor: {CONTAINER_MAC}", flush=True)
+if mac_env:
+    CONTAINER_MAC = mac_env
+else:
+    try:
+        mac_bytes = get_interface_mac(INTERFACE)
+        CONTAINER_MAC = ":".join(f"{b:02x}" for b in mac_bytes)
+    except Exception as e:
+        CONTAINER_MAC = "00:00:00:00:00:00"
+        print(f"Error obteniendo MAC: {e}")
 
 
 def allowed_file(filename):
@@ -83,54 +60,30 @@ def allowed_file(filename):
 
 @app.route("/", methods=["GET", "POST"])
 def login():
-    print(f"[LOGIN] Método: {request.method}", flush=True)
-
     if request.method == "POST":
         username = request.form.get("username")
-        print(
-            f"[LOGIN] Usuario intentando login: {username}, {CONTAINER_MAC}", flush=True
-        )
-
         if username:
             session["username"] = username
             session["mac"] = CONTAINER_MAC
-            # app.secret_key = f"secret_key_{CONTAINER_MAC.replace(':', '')}"
-
-            print(
-                f"[LOGIN] ✅ Login exitoso - Usuario: {username}, MAC: {CONTAINER_MAC}",
-                flush=True,
-            )
+            app.secret_key = f"secret_key_{CONTAINER_MAC.replace(':', '')}"
 
             # Lanzar NetworkManager en hilo aparte
             def start_network():
                 try:
-                    print("[NetworkManager] Iniciando en thread...", flush=True)
                     network_manager.start(CONTAINER_MAC)
-                    print("[NetworkManager] ✅ Iniciado correctamente", flush=True)
                 except Exception as e:
-                    print(f"[NetworkManager] ❌ Error al iniciar: {e}", flush=True)
-                    import traceback
+                    print(f"[NetworkManager] Error al iniciar: {e}")
 
-                    traceback.print_exc()
-
-            thread = threading.Thread(target=start_network, daemon=True)
-            thread.start()
-            print("[LOGIN] Thread de NetworkManager lanzado", flush=True)
+            threading.Thread(target=start_network, daemon=True).start()
 
             return redirect(url_for("chat"))
-
-    print("[LOGIN] Mostrando página de login", flush=True)
     return render_template("login.html")
 
 
 @app.route("/chat")
 def chat():
-    print("[CHAT] Acceso a página de chat", flush=True)
     if "username" not in session or "mac" not in session:
-        print("[CHAT] ⚠️ Sesión no válida, redirigiendo a login", flush=True)
         return redirect(url_for("login"))
-
-    print(f"[CHAT] Usuario: {session['username']}, MAC: {session['mac']}", flush=True)
     return render_template(
         "index.html",
         username=session["username"],
@@ -140,9 +93,7 @@ def chat():
 
 @app.route("/get_users")
 def get_users():
-    users = network_manager.get_peers_for_flask()
-    print(f"[API] get_users - Retornando {len(users)} usuarios", flush=True)
-    return jsonify(users)
+    return jsonify(network_manager.get_peers_for_flask())
 
 
 @app.route("/get_messages/<other_mac>")
@@ -151,9 +102,7 @@ def get_messages(other_mac):
     if not my_mac:
         return jsonify([])
     chat_id = "-".join(sorted([my_mac, other_mac]))
-    messages = chat_messages.get(chat_id, [])
-    print(f"[API] get_messages - Chat {chat_id}: {len(messages)} mensajes", flush=True)
-    return jsonify(messages)
+    return jsonify(chat_messages.get(chat_id, []))
 
 
 @app.route("/send_message", methods=["POST"])
@@ -163,13 +112,7 @@ def send_message():
     other_mac = data.get("other_mac")
     message_text = data.get("message")
 
-    print(
-        f"[API] send_message - De: {my_mac}, Para: {other_mac}, Msg: {message_text[:50]}...",
-        flush=True,
-    )
-
     if not my_mac or not other_mac or not message_text:
-        print("[API] ⚠️ send_message - Datos incompletos", flush=True)
         return jsonify({"success": False})
 
     try:
@@ -184,13 +127,8 @@ def send_message():
             "timestamp": datetime.now().strftime("%H:%M"),
         }
         chat_messages[chat_id].append(new_message)
-        print("[API] ✅ Mensaje enviado correctamente", flush=True)
         return jsonify({"success": True})
     except Exception as e:
-        print(f"[API] ❌ Error enviando mensaje: {e}", flush=True)
-        import traceback
-
-        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -302,7 +240,6 @@ def send_file():
 
 @app.route("/logout")
 def logout():
-    print(f"[LOGOUT] Usuario cerrando sesión: {session.get('username')}", flush=True)
     try:
         network_manager.stop()
     except Exception:
@@ -313,7 +250,4 @@ def logout():
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
-    print(f"[INIT] 🌐 Iniciando servidor Flask en puerto {port}", flush=True)
-    print("[INIT] 🔧 Debug mode: True", flush=True)
-    print("[INIT] 📡 Host: 0.0.0.0", flush=True)
-    app.run(debug=True, host="0.0.0.0", port=port, use_reloader=False)
+    app.run(debug=True, host="0.0.0.0", port=port)
