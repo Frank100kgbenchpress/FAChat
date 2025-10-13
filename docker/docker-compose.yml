@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  user1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: fachat_user1
+    hostname: user1
+    environment:
+      - USER_NAME=Alice
+      - PORT=5000
+      - MY_MAC=02:42:ac:1c:00:02
+    ports:
+      - "5005:5000"  # Para acceder desde host
+    networks:
+      fachat_net:
+        ipv4_address: 172.28.0.2
+    command: ["python3", "web/app.py"]
+
+  user2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: fachat_user2
+    hostname: user2
+    environment:
+      - USER_NAME=Bob
+      - PORT=5000
+      - MY_MAC=02:42:ac:1c:00:03
+    ports:
+      - "5006:5000"  # Mapeo distinto al host
+    networks:
+      fachat_net:
+        ipv4_address: 172.28.0.3
+    command: ["python3", "web/app.py"]
+
+networks:
+  fachat_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
