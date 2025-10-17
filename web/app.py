@@ -16,6 +16,8 @@ import uuid
 import os
 import sys
 import time
+from network_manager import NetworkManager
+import secrets
 
 # 🔹 Agregar src al path
 sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
@@ -24,21 +26,41 @@ print("=" * 50, flush=True)
 print("🚀 INICIANDO FACHAT APPLICATION", flush=True)
 print("=" * 50, flush=True)
 
-from network_manager import NetworkManager
-from ethernet import get_interface_mac, INTERFACE
+
+def get_secret_path():
+    # Obtener la ruta raíz del proyecto
+    base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    secret_folder = os.path.join(base_path, "secret_keys")
+    if not os.path.exists(secret_folder):
+        os.makedirs(secret_folder)
+    return os.path.join(secret_folder, "secret_key.txt")
+
+
+def get_or_create_secret():
+    """Obtiene o crea la clave secreta para Flask"""
+    secret_path = get_secret_path()
+    if os.path.exists(secret_path):
+        with open(secret_path, "r") as f:
+            return f.read().strip()  # Leer y devolver la clave si existe
+    key = secrets.token_hex(32)  # Si no existe, crear una nueva clave
+    with open(secret_path, "w") as f:
+        f.write(key)  # Guardar la clave generada en el archivo
+    print(f"[INIT] 🔐 Nueva SECRET_KEY generada en {secret_path}", flush=True)
+    return key
 
 
 def create_app():
     app = Flask(__name__)
-    # Read from env; NEVER set inside request handlers
-    app.secret_key = os.environ["SECRET_KEY"]  # e.g., a 32+ random bytes
+    app.secret_key = get_or_create_secret()
     app.config["SESSION_COOKIE_NAME"] = os.environ.get(
         "SESSION_COOKIE_NAME", "session_app"
     )
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    app.config["SESSION_COOKIE_SECURE"] = False  # True si vas por HTTPS
+    app.config["SESSION_COOKIE_SECURE"] = False
     return app
 
+
+from ethernet import get_interface_mac, INTERFACE
 
 app = create_app()
 
@@ -60,10 +82,12 @@ ALLOWED_EXTENSIONS = set(
     ]
 )
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 1000 * 1024 * 1024
 
 network_manager = NetworkManager()
 chat_messages = network_manager.chat_messages
+
+no_login = False
 
 # 🔹 Obtener MAC: primero env var, si no existe, la interfaz física
 mac_env = os.getenv("MY_MAC")
@@ -90,6 +114,19 @@ def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+# Lanzar NetworkManager en hilo aparte
+def start_network():
+    try:
+        print("[NetworkManager] Iniciando en thread...", flush=True)
+        network_manager.start(CONTAINER_MAC)
+        print("[NetworkManager] ✅ Iniciado correctamente", flush=True)
+    except Exception as e:
+        print(f"[NetworkManager] ❌ Error al iniciar: {e}", flush=True)
+        import traceback
+
+        traceback.print_exc()
+
+
 @app.route("/", methods=["GET", "POST"])
 def login():
     print(f"[LOGIN] Método: {request.method}", flush=True)
@@ -110,20 +147,11 @@ def login():
                 flush=True,
             )
 
-            # Lanzar NetworkManager en hilo aparte
-            def start_network():
-                try:
-                    print("[NetworkManager] Iniciando en thread...", flush=True)
-                    network_manager.start(CONTAINER_MAC)
-                    print("[NetworkManager] ✅ Iniciado correctamente", flush=True)
-                except Exception as e:
-                    print(f"[NetworkManager] ❌ Error al iniciar: {e}", flush=True)
-                    import traceback
-
-                    traceback.print_exc()
-
+            global no_login
+            no_login = True
             thread = threading.Thread(target=start_network, daemon=True)
             thread.start()
+
             print("[LOGIN] Thread de NetworkManager lanzado", flush=True)
 
             return redirect(url_for("chat"))
@@ -140,6 +168,11 @@ def chat():
         return redirect(url_for("login"))
 
     print(f"[CHAT] Usuario: {session['username']}, MAC: {session['mac']}", flush=True)
+    global no_login
+    if not no_login:
+        no_login = True
+        thread = threading.Thread(target=start_network, daemon=True)
+        thread.start()
     return render_template(
         "index.html",
         username=session["username"],
