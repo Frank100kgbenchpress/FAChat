@@ -408,4 +408,93 @@ function startUserPolling() {
 document.addEventListener("DOMContentLoaded", () => {
     fetchUsers();
     startUserPolling();
+
+    // --- NUEVO: input y botón para enviar carpetas ---
+    // Crear input hidden webkitdirectory
+    if (!document.getElementById("dirPicker")) {
+        const dirInput = document.createElement("input");
+        dirInput.type = "file";
+        dirInput.id = "dirPicker";
+        dirInput.webkitdirectory = true;
+        dirInput.multiple = true;
+        dirInput.style.display = "none";
+        document.body.appendChild(dirInput);
+
+        // Crear botón visible para enviar carpeta junto al botón de archivo
+        const fileBtn = document.getElementById("file-btn");
+        const folderBtn = document.createElement("button");
+        folderBtn.id = "send-folder-btn";
+        folderBtn.type = "button";
+        folderBtn.className = "file-button";
+        folderBtn.title = "Enviar carpeta";
+        folderBtn.innerHTML = '<i class="fas fa-folder-open"></i>';
+        // Insertar después del file button si existe, si no al final del body
+        if (fileBtn && fileBtn.parentNode) fileBtn.parentNode.insertBefore(folderBtn, fileBtn.nextSibling);
+        else document.body.appendChild(folderBtn);
+
+        // Al hacer click, abrimos el selector de carpetas
+        folderBtn.addEventListener("click", () => {
+            document.getElementById("dirPicker").click();
+        });
+
+        // Cuando el usuario selecciona la carpeta, enviarla
+        dirInput.addEventListener("change", async (e) => {
+            const files = Array.from(e.target.files || []);
+            if (files.length === 0) return alert("No se seleccionaron archivos.");
+
+            if (isGroupChat || !currentChat) {
+                return alert("Envio de carpetas solo disponible en chat individual.");
+            }
+
+            const destMac = currentChat.mac;
+            if (!destMac) return alert("Destino no seleccionado.");
+
+            // Construir FormData con webkitRelativePath para preservar estructura
+            const fd = new FormData();
+            fd.append("dest_mac", destMac);
+
+            for (const file of files) {
+                const filename = file.webkitRelativePath || file.name;
+                fd.append("files", file, filename);
+            }
+
+            // Mostrar feedback local en la UI
+            const baseFolder = (files[0] && (files[0].webkitRelativePath || files[0].name).split('/')[0]) || "carpeta";
+            const messagesDiv = document.getElementById("messages");
+            const p = document.createElement("div");
+            p.className = "message msg-me file-message";
+            p.innerHTML = `
+                <div class="file-message-container own-file">
+                    <div class="file-icon"><i class="fas fa-folder"></i></div>
+                    <div class="file-info">
+                        <div class="file-name">${baseFolder}</div>
+                        <div class="file-actions"><span class="file-size">carpeta</span></div>
+                    </div>
+                </div>
+                <small class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</small>
+            `;
+            messagesDiv.appendChild(p);
+            setTimeout(() => p.classList.add("show"), 50);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            // Enviar al servidor
+            try {
+                const res = await fetch("/upload_folder", { method: "POST", body: fd });
+                const data = await res.json();
+                if (!res.ok) {
+                    console.error("Error enviando carpeta:", data);
+                    alert("Error al enviar carpeta: " + (data.error || JSON.stringify(data)));
+                } else {
+                    console.log("Envío de carpeta iniciado:", data);
+                    // opcional: mostrar notificación o actualizar UI con upload_id
+                }
+            } catch (err) {
+                console.error("Error de red al enviar carpeta:", err);
+                alert("Error de conexión al enviar carpeta");
+            } finally {
+                // reset input para permitir re-selección de la misma carpeta
+                e.target.value = "";
+            }
+        });
+    }
 });

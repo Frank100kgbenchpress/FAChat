@@ -20,16 +20,23 @@ class NetworkManager:
         try:
             import sys
 
-            sys.path.append("/app/src")
+            # agregar ../src relativo a este archivo (web -> ../src)
+            sys.path.insert(
+                0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+            )
 
             from messaging import discover_peers, send_message, start_message_loop
             from files import send_file, start_file_loop, stop_file_loop
+
+            # importar send_folder para enviar carpetas recursivas
+            from folders import send_folder
             from ethernet import send_frame, start_recv_loop, stop_recv_loop
 
             self.backend = {
                 "discover_peers": discover_peers,
                 "send_message": send_message,
                 "send_file": send_file,
+                "send_folder": send_folder,
                 "start_file_loop": start_file_loop,
                 "stop_file_loop": stop_file_loop,
                 "send_frame": send_frame,
@@ -69,49 +76,42 @@ class NetworkManager:
         self.chat_messages[chat_id].append(new_message)
 
     def rec_file(self, src_mac: str, file_path: str, status: str) -> None:
-        """Maneja la recepción de archivos"""
-        print(f"Recibiendo archivo de {src_mac} en {file_path} con estado {status}")
+        """Maneja la recepción de archivos y carpetas"""
+        print(f"Recibiendo de {src_mac} en {file_path} con estado {status}")
 
         if src_mac == self.my_mac:
-            print("📤 Ignorando archivo propio (soy el emisor).")
+            print("📤 Ignorando archivo propio")
             return
 
         if status == "completed" or status == "finished":
-            # Usar la ruta ABSOLUTA y moverla a la carpeta de archivos recibidos
             absolute_path = os.path.abspath(file_path)
 
-            # Definir la nueva ruta de destino en la carpeta "archivos_recibidos"
+            # Verificar que esté dentro de RECV_DIR
+            if not absolute_path.startswith(os.path.abspath(self.RECV_DIR)):
+                print(f"⚠️ Archivo fuera de RECV_DIR: {absolute_path}")
+                return
+
+            # Determinar si es archivo individual o parte de carpeta
             filename = os.path.basename(absolute_path)
-            destino_path = os.path.join(self.RECV_DIR, filename)
-
-            # Mover el archivo a la nueva ubicación
-            os.rename(
-                absolute_path, destino_path
-            )  # Mover archivo a la carpeta recibidos
-
-            # Si el nombre de archivo tiene UUID, extraer solo el nombre real
-            display_name = filename.replace("recv_", "", 1)
-            if "_" in display_name and len(display_name.split("_")) > 1:
-                parts = display_name.split("_", 1)
-                if len(parts) > 1:
-                    display_name = parts[1]
 
             chat_id = "-".join(sorted([self.my_mac, src_mac]))
             if chat_id not in self.chat_messages:
                 self.chat_messages[chat_id] = []
 
+            # Siempre registrar como archivo individual (como funciona actualmente)
             file_message = {
                 "id": str(uuid.uuid4()),
                 "sender": src_mac,
-                "text": f"[ARCHIVO]{display_name}",
-                "file_path": destino_path,  # Ruta actualizada al archivo en "archivos_recibidos"
-                "filename": display_name,
+                "text": f"[ARCHIVO]{filename}",
+                "file_path": absolute_path,
+                "filename": filename,
                 "timestamp": datetime.now().strftime("%H:%M"),
                 "type": "file",
             }
-        self.chat_messages[chat_id].append(file_message)
-        print(f"✅ Mensaje de archivo añadido: {display_name}")
-        print(f"📁 Ruta guardada: {destino_path}")
+
+            self.chat_messages[chat_id].append(file_message)
+            print(f"✅ Archivo recibido: {filename}")
+            print(f"📁 Ruta: {absolute_path}")
 
     def start(self, my_mac: str):
         print(f"Starting NetworkManager with MAC: {my_mac}")
@@ -195,6 +195,14 @@ class NetworkManager:
         if not self.backend_available:
             raise RuntimeError("Backend no disponible")
         self.backend["send_file"](dest_mac, file_path)
+
+    # Añadir método delegado en la clase NetworkManager
+    def send_folder(self, dest_mac: str, folder_path: str, **kwargs):
+        """Delegar envío recursivo de carpeta al backend (folders.send_folder)."""
+        if not self.backend_available:
+            raise RuntimeError("Backend no disponible")
+        # pasar kwargs para use_ack/retries/timeout si se desean
+        return self.backend["send_folder"](dest_mac, folder_path, **kwargs)
 
     def get_peers_for_flask(self) -> List[Dict]:
         result = []

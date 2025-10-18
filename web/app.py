@@ -91,7 +91,7 @@ for folder in ["send_files", "recv_files"]:
         os.makedirs(folder)
         print(f"[INIT] 📁 Carpeta creada: {folder}", flush=True)
 
-app.config["MAX_CONTENT_LENGTH"] = 1000 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 10000 * 1024 * 1024
 
 network_manager = NetworkManager(RECV_DIR)
 chat_messages = network_manager.chat_messages
@@ -102,10 +102,6 @@ no_login = False
 mac_env = os.getenv("MY_MAC")
 print(f"[INIT] MY_MAC env var: {mac_env}", flush=True)
 
-# if mac_env:
-#     CONTAINER_MAC = mac_env
-#     print(f"[INIT] Usando MAC de variable de entorno: {CONTAINER_MAC}", flush=True)
-# else:
 try:
     print(f"[INIT] Intentando obtener MAC de interfaz: {INTERFACE}", flush=True)
     mac_bytes = get_interface_mac(INTERFACE)
@@ -321,15 +317,6 @@ def upload_file():
 
         chat_messages[chat_id].append(file_message)
 
-        # # Limpiar archivo temporal
-        # try:
-        #     os.remove(temp_path)
-        #     print(f"[send_file] Archivo temporal eliminado: {temp_path}", flush=True)
-        # except Exception as e:
-        #     print(
-        #         f"[send_file] ⚠️ No se pudo eliminar archivo temporal: {e}", flush=True
-        #     )
-
         return jsonify({"success": True, "filename": filename})
 
     except FileNotFoundError as e:
@@ -352,6 +339,114 @@ def upload_file():
             pass
 
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/upload_folder", methods=["POST"])
+def upload_folder():
+    """
+    Envía una carpeta directamente a send_files manteniendo estructura
+    """
+    dest_mac = request.form.get("dest_mac")
+
+    if not dest_mac:
+        return jsonify({"error": "dest_mac requerido"}), 400
+
+    files_list = request.files.getlist("files")
+    if not files_list:
+        return jsonify({"error": "no files uploaded"}), 400
+
+    # 🔹 OBTENER NOMBRE REAL DE LA CARPETA
+    folder_name = "carpeta"
+    if files_list and files_list[0].filename:
+        first_path = files_list[0].filename
+        if "/" in first_path:
+            folder_name = first_path.split("/")[0]
+        elif "\\" in first_path:
+            folder_name = first_path.split("\\")[0]
+
+    # Si no pudimos determinar el nombre, usar uno por defecto con timestamp
+    if folder_name == "carpeta":
+        folder_name = f"carpeta_{int(time.time())}"
+
+    # 🔹 CREAR CARPETA CON NOMBRE REAL DENTRO DE SEND_FILES
+    target_root = os.path.join(SEND_DIR, folder_name)
+
+    # Si ya existe, agregar sufijo numérico
+    counter = 1
+    original_target = target_root
+    while os.path.exists(target_root):
+        target_root = f"{original_target}_{counter}"
+        counter += 1
+
+    os.makedirs(target_root, exist_ok=True)
+
+    from werkzeug.utils import secure_filename as _sf
+
+    def safe_rel_path(raw_path: str) -> str:
+        raw_path = raw_path.replace("\\", "/")
+        parts = [p for p in raw_path.split("/") if p not in ("", ".")]
+        safe_parts = []
+        for p in parts:
+            if p == "..":
+                continue
+            s = _sf(p)
+            if not s:
+                s = "file"
+            safe_parts.append(s)
+        return os.path.join(*safe_parts) if safe_parts else "file"
+
+    # Guardar archivos manteniendo estructura (CORREGIDO)
+    for f in files_list:
+        rel = f.filename or f.name
+
+        # 🔹 CORRECCIÓN: Remover el nombre de la carpeta raíz de la ruta relativa
+        # Si la ruta es "Proyecto/src/main.py", queremos que sea "src/main.py"
+        rel = rel.replace("\\", "/")
+        if "/" in rel:
+            # Remover el primer componente (el nombre de la carpeta raíz)
+            path_parts = rel.split("/")
+            if len(path_parts) > 1 and path_parts[0] == folder_name:
+                # Si el primer componente coincide con folder_name, lo removemos
+                rel = "/".join(path_parts[1:])
+            elif len(path_parts) > 1:
+                # Si no coincide pero hay múltiples componentes, usamos todo menos el primero
+                rel = "/".join(path_parts[1:])
+
+        rel_safe = safe_rel_path(rel)
+        dest_path = os.path.join(target_root, rel_safe)
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        f.save(dest_path)
+        print(f"💾 Archivo guardado: {dest_path}")
+
+    # Enviar carpeta
+    try:
+        print(
+            f"_________________________ENVIANDO CARPETA: {target_root}_______________________"
+        )
+        network_manager.send_folder(dest_mac, target_root, use_ack=True)
+
+        # Registrar en el chat
+        my_mac = session.get("mac")
+        chat_id = "-".join(sorted([my_mac, dest_mac]))
+        if chat_id not in chat_messages:
+            chat_messages[chat_id] = []
+
+        folder_message = {
+            "id": str(uuid.uuid4()),
+            "sender": my_mac,
+            "text": f"[CARPETA]{os.path.basename(target_root)}",
+            "folder_path": target_root,  # Ruta completa de la carpeta
+            "folder_name": os.path.basename(target_root),
+            "timestamp": datetime.now().strftime("%H:%M"),
+            "type": "folder",
+        }
+
+        chat_messages[chat_id].append(folder_message)
+
+    except Exception as e:
+        return jsonify({"error": f"send_folder failed: {e}"}), 500
+
+    return jsonify({"ok": True, "folder_name": os.path.basename(target_root)})
 
 
 @app.route("/logout")

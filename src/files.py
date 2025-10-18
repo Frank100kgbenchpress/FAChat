@@ -102,11 +102,14 @@ def send_file(
     use_ack: bool = True,
     retries: int = 5,
     timeout: float = 1.0,
+    remote_name: Optional[str] = None,
 ) -> None:
     """
     Envía un archivo con STOP-AND-WAIT por canal FILE_CHANNEL.
+    remote_name: si se pasa, será el 'nombre' (puede incluir subcarpetas con '/')
+    que se enviará como metadata y que el receptor usará para crear rutas.
     """
-    print(f"send_file hacai {dest_mac} en {path}")
+    print(f"send_file hacai {dest_mac} en {path} (remote_name={remote_name})")
     if not dest_mac:
         dest_mac = BROADCAST_MAC
     if not os.path.isfile(path):
@@ -114,7 +117,9 @@ def send_file(
         raise FileNotFoundError(path)
 
     filesize = os.path.getsize(path)
-    filename_bytes = os.path.basename(path).encode("utf-8")
+    # usar nombre remoto si se provee (permite rutas relativas dentro de la carpeta)
+    filename = remote_name if remote_name else os.path.basename(path)
+    filename_bytes = filename.encode("utf-8")
 
     file_id = new_file_id()
 
@@ -190,12 +195,42 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
 
             fname, expected = _safe_meta_decode(payload)
 
-            # Directorio de archivos recibidos
+            # Soporte para marcador de carpeta: metadata con prefijo DIR:
+            if isinstance(fname, str) and fname.startswith("DIR:"):
+                rel = fname[4:]
+                # normalizar y evitar traversal
+                rel_norm = os.path.normpath(rel).replace("\\", "/")
+                if os.path.isabs(rel_norm) or rel_norm.startswith(".."):
+                    print(f"[files] Ignorando intento de traversal en DIR:{rel}")
+                    return
+                RECV_DIR = os.getenv("RECV_DIR", "/app/recv_files")
+                dirpath = os.path.join(RECV_DIR, rel_norm)
+                try:
+                    os.makedirs(dirpath, exist_ok=True)
+                    print(f"[files] DIR_CREATED {dirpath} desde {src_mac}")
+                    if _user_cb:
+                        _user_cb(src_mac, dirpath, "dir_created")
+                except Exception as e:
+                    print(f"[files] Error creando dir {dirpath}: {e}")
+                return
+
+            # Directorio de archivos recibidos (archivo normal)
             RECV_DIR = os.getenv("RECV_DIR", "/app/recv_files")
             os.makedirs(RECV_DIR, exist_ok=True)
 
-            # Guardar archivo recibido en la carpeta correspondiente
-            outname = os.path.join(RECV_DIR, f"recv_{fname}")
+            # Sanitizar nombre/ruta y evitar path traversal
+            fname_norm = os.path.normpath(fname).replace("\\", "/")
+            if os.path.isabs(fname_norm) or fname_norm.startswith(".."):
+                print(f"[files] Ignorando intento de traversal en FILE:{fname}")
+                return
+
+            # 🔹 CAMBIO CLAVE: Usar la ruta completa con estructura de carpetas
+            outname = os.path.join(RECV_DIR, fname_norm)
+
+            # Asegurar directorio padre
+            parent = os.path.dirname(outname)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
 
             # Si ya existe un archivo con el mismo nombre, agrega un sufijo
             if os.path.exists(outname):
