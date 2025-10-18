@@ -7,12 +7,13 @@ import uuid
 
 
 class NetworkManager:
-    def __init__(self):
+    def __init__(self, RECV_DIR: str):
         self.peers: Dict[str, Dict] = {}
         self.my_mac = None
         self.on_peers_updated: Optional[Callable] = None
         self.running = False
         self.chat_messages = {}
+        self.RECV_DIR = RECV_DIR
         self._import_backend_modules()
 
     def _import_backend_modules(self):
@@ -71,15 +72,26 @@ class NetworkManager:
         """Maneja la recepción de archivos"""
         print(f"Recibiendo archivo de {src_mac} en {file_path} con estado {status}")
 
-        if status == "completed" or status == "finished":
-            # Usar la ruta ABSOLUTA que viene del files.py
-            absolute_path = os.path.abspath(file_path)
-            filename = os.path.basename(absolute_path)
-            display_name = filename.replace("recv_", "", 1)
+        if src_mac == self.my_mac:
+            print("📤 Ignorando archivo propio (soy el emisor).")
+            return
 
-            # Si el display_name tiene UUID, extraer solo el nombre real
+        if status == "completed" or status == "finished":
+            # Usar la ruta ABSOLUTA y moverla a la carpeta de archivos recibidos
+            absolute_path = os.path.abspath(file_path)
+
+            # Definir la nueva ruta de destino en la carpeta "archivos_recibidos"
+            filename = os.path.basename(absolute_path)
+            destino_path = os.path.join(self.RECV_DIR, filename)
+
+            # Mover el archivo a la nueva ubicación
+            os.rename(
+                absolute_path, destino_path
+            )  # Mover archivo a la carpeta recibidos
+
+            # Si el nombre de archivo tiene UUID, extraer solo el nombre real
+            display_name = filename.replace("recv_", "", 1)
             if "_" in display_name and len(display_name.split("_")) > 1:
-                # Formato: "uuid_nombrearchivo" -> quedarse con "nombrearchivo"
                 parts = display_name.split("_", 1)
                 if len(parts) > 1:
                     display_name = parts[1]
@@ -92,14 +104,14 @@ class NetworkManager:
                 "id": str(uuid.uuid4()),
                 "sender": src_mac,
                 "text": f"[ARCHIVO]{display_name}",
-                "file_path": absolute_path,  # ← RUTA ABSOLUTA CORRECTA
+                "file_path": destino_path,  # Ruta actualizada al archivo en "archivos_recibidos"
                 "filename": display_name,
                 "timestamp": datetime.now().strftime("%H:%M"),
                 "type": "file",
             }
-            self.chat_messages[chat_id].append(file_message)
-            print(f"✅ Mensaje de archivo añadido: {display_name}")
-            print(f"📁 Ruta guardada: {absolute_path}")
+        self.chat_messages[chat_id].append(file_message)
+        print(f"✅ Mensaje de archivo añadido: {display_name}")
+        print(f"📁 Ruta guardada: {destino_path}")
 
     def start(self, my_mac: str):
         print(f"Starting NetworkManager with MAC: {my_mac}")
@@ -171,7 +183,8 @@ class NetworkManager:
             self.rec_file(src_mac, path, status)
 
         if self.backend_available:
-            self.backend["start_file_loop"](file_callback)
+            # pasar la MAC local para que el módulo files pueda ignorar paquetes propios
+            self.backend["start_file_loop"](file_callback, self.my_mac)
 
     def send_chat_message(self, dest_mac: str, message: str):
         if not self.backend_available:

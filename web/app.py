@@ -64,7 +64,7 @@ from ethernet import get_interface_mac, INTERFACE
 
 app = create_app()
 
-UPLOAD_FOLDER = tempfile.gettempdir()  # Usar carpeta temporal del sistema
+# Usar carpeta temporal del sistema
 ALLOWED_EXTENSIONS = set(
     [
         "txt",
@@ -81,10 +81,19 @@ ALLOWED_EXTENSIONS = set(
         "mp3",
     ]
 )
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# 🔹 Crear carpetas de archivos enviados y recibidos
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SEND_DIR = os.path.join(BASE_DIR, "send_files")
+RECV_DIR = os.path.join(BASE_DIR, "recv_files")
+
+for folder in ["send_files", "recv_files"]:
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+        print(f"[INIT] 📁 Carpeta creada: {folder}", flush=True)
+
 app.config["MAX_CONTENT_LENGTH"] = 1000 * 1024 * 1024
 
-network_manager = NetworkManager()
+network_manager = NetworkManager(RECV_DIR)
 chat_messages = network_manager.chat_messages
 
 no_login = False
@@ -273,27 +282,26 @@ def upload_file():
     try:
         # Guardar archivo temporalmente con nombre seguro
         filename = secure_filename(file.filename)
-        temp_path = os.path.join(
-            app.config["UPLOAD_FOLDER"], f"{uuid.uuid4()}_{filename}"
-        )
-
-        print(f"[send_file] Guardando archivo temporal: {temp_path}", flush=True)
-        file.save(temp_path)
+        # Guardar archivo en la carpeta de enviados
+        file_id = str(uuid.uuid4())
+        save_path = os.path.join(SEND_DIR, f"{file_id}_{filename}")
+        file.save(save_path)
+        print(f"[send_file] 📤 Archivo guardado en enviados: {save_path}", flush=True)
 
         # Verificar que el archivo se guardó correctamente
-        if not os.path.exists(temp_path):
+        if not os.path.exists(save_path):
             return jsonify(
                 {"success": False, "error": "Error al guardar archivo temporal"}
             ), 500
 
-        file_size = os.path.getsize(temp_path)
+        file_size = os.path.getsize(save_path)
         print(
             f"[send_file] Archivo guardado: {filename} ({file_size} bytes)", flush=True
         )
 
         # Enviar archivo por red
         print(f"[send_file] Enviando archivo a {other_mac}...", flush=True)
-        network_manager.send_file(other_mac, temp_path)
+        network_manager.send_file(other_mac, save_path)
         print("[send_file] ✅ Archivo enviado correctamente", flush=True)
 
         # Guardar referencia en chat_messages
@@ -305,8 +313,12 @@ def upload_file():
             "id": str(uuid.uuid4()),
             "sender": my_mac,
             "text": f"[ARCHIVO]{filename}",
+            "filename": filename,
+            "file_path": save_path,  # 🔹 agregar ruta real
             "timestamp": datetime.now().strftime("%H:%M"),
+            "type": "file",
         }
+
         chat_messages[chat_id].append(file_message)
 
         # # Limpiar archivo temporal
@@ -334,8 +346,8 @@ def upload_file():
 
         # Intentar limpiar archivo temporal en caso de error
         try:
-            if "temp_path" in locals() and os.path.exists(temp_path):
-                os.remove(temp_path)
+            if "temp_path" in locals() and os.path.exists(save_path):
+                os.remove(save_path)
         except Exception:
             pass
 
@@ -355,60 +367,44 @@ def logout():
 
 @app.route("/download_file/<file_id>")
 def download_file(file_id):
-    """Descargar archivo por ID del mensaje"""
+    """Descargar archivo real según su ID almacenado"""
     try:
         print(f"[DOWNLOAD] Solicitado archivo con ID: {file_id}", flush=True)
 
-        # Buscar el archivo en todos los chats
+        # Buscar el mensaje que tenga este ID
         for chat_id, messages in network_manager.chat_messages.items():
             for message in messages:
                 if message.get("id") == file_id and (
                     message.get("type") == "file"
                     or message.get("text", "").startswith("[ARCHIVO]")
                 ):
+                    file_path = message.get("file_path")
                     filename = message.get("filename", "archivo_descargado")
 
-                    print(f"[DOWNLOAD] Encontrado mensaje: {filename}", flush=True)
-
-                    # BUSCAR EL ARCHIVO EN /app/ POR NOMBRE
-                    import glob
-
-                    # Buscar archivos que coincidan con el patrón
-                    search_patterns = [
-                        f"/app/recv_*{filename}",
-                        f"/app/*{filename}*",
-                        f"/app/{filename}",
-                    ]
-
-                    for pattern in search_patterns:
-                        for file_path in glob.glob(pattern):
-                            if os.path.exists(file_path):
-                                print(
-                                    f"[DOWNLOAD] ✅ Enviando archivo: {file_path}",
-                                    flush=True,
-                                )
-
-                                # Opción 1: Sin as_attachment (descarga en navegador)
-                                # return send_file(file_path)
-
-                                # Opción 2: Forzar descarga con headers
-                                response = send_file(file_path)
-                                response.headers["Content-Disposition"] = (
-                                    f"attachment; filename={filename}"
-                                )
-                                return response
+                    if not file_path or not os.path.exists(file_path):
+                        print(
+                            f"[DOWNLOAD] ❌ Archivo no encontrado en disco: {file_path}",
+                            flush=True,
+                        )
+                        return "Archivo no encontrado", 404
 
                     print(
-                        f"[DOWNLOAD] ❌ No se encontró archivo para: {filename}",
-                        flush=True,
+                        f"[DOWNLOAD] ✅ Enviando archivo real: {file_path}", flush=True
                     )
-                    return "Archivo no encontrado", 404
 
-        print(f"[DOWNLOAD] ❌ Mensaje no encontrado para ID: {file_id}", flush=True)
+                    # 🔹 Usa send_file en modo binario con el nombre correcto
+                    return send_file(
+                        file_path,
+                        as_attachment=True,
+                        download_name=filename,
+                        mimetype="application/octet-stream",
+                    )
+
+        print(f"[DOWNLOAD] ❌ Mensaje con ID {file_id} no encontrado", flush=True)
         return "Mensaje no encontrado", 404
 
     except Exception as e:
-        print(f"[DOWNLOAD] ❌ Error: {e}", flush=True)
+        print(f"[DOWNLOAD] ❌ Error al descargar: {e}", flush=True)
         import traceback
 
         traceback.print_exc()

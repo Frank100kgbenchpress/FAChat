@@ -35,6 +35,9 @@ _user_cb: Optional[Callable[[str, str, str], None]] = None
 _recv_started = False
 _ack_sock: Optional[socket.socket] = None
 
+# nueva variable para comparar MAC propia
+_my_mac: Optional[str] = None
+
 
 def _safe_meta_decode(payload: bytes) -> Tuple[str, int]:
     """payload: b'filename|filesize'"""
@@ -162,6 +165,10 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
     Callback interno: parsea header y maneja FILE_START / FILE_CHUNK / FILE_END.
     """
     global _user_cb
+    # IGNORAR paquetes que vienen de mi propia MAC (evita crear archivos propios)
+    if _my_mac and src_mac == _my_mac:
+        return
+
     try:
         info = parse_header(raw_payload)
     except Exception:
@@ -182,23 +189,37 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
                 _in_progress.pop(fid, None)
 
             fname, expected = _safe_meta_decode(payload)
-            outname = f"recv_{fname}"
+
+            # Directorio de archivos recibidos
+            RECV_DIR = os.getenv("RECV_DIR", "/app/recv_files")
+            os.makedirs(RECV_DIR, exist_ok=True)
+
+            # Guardar archivo recibido en la carpeta correspondiente
+            outname = os.path.join(RECV_DIR, f"recv_{fname}")
+
+            # Si ya existe un archivo con el mismo nombre, agrega un sufijo
             if os.path.exists(outname):
                 base, ext = os.path.splitext(outname)
                 i = 1
                 while os.path.exists(f"{base}_{i}{ext}"):
                     i += 1
                 outname = f"{base}_{i}{ext}"
+
             try:
                 fh = open(outname, "wb")
             except Exception as e:
+                print(f"[files] Error abriendo {outname}: {e}")
                 return
+
             _in_progress[fid] = {
                 "path": outname,
                 "handle": fh,
                 "expected": expected,
                 "received": 0,
             }
+            print(
+                f"[files] FILE_START de {src_mac} id={fid.hex()} fname={fname} expected={expected}"
+            )
             if _user_cb:
                 _user_cb(src_mac, outname, "started")
 
@@ -227,8 +248,9 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
                     ACK, b"", channel=FILE_CHANNEL, seq=seq, file_id=fid
                 )
                 send_frame(src_mac, ack_pkt)
-            except Exception:
-                pass
+                print(f"[files] ACK enviado a {src_mac} seq={seq} id={fid.hex()}")
+            except Exception as e:
+                print(f"[files] Error enviando ACK: {e}")
 
         elif typ == FILE_END:
             if fid not in _in_progress:
@@ -258,9 +280,12 @@ def _file_recv_internal(src_mac: str, raw_payload: bytes):
             _in_progress.pop(fid, None)
 
 
-def start_file_loop(user_callback: Callable[[str, str, str], None]) -> None:
-    global _user_cb, _recv_started
+def start_file_loop(
+    user_callback: Callable[[str, str, str], None], my_mac: Optional[str] = None
+) -> None:
+    global _user_cb, _recv_started, _my_mac
     _user_cb = user_callback
+    _my_mac = my_mac
 
     if not _recv_started:
         # Registrar callback para FILE_CHANNEL
