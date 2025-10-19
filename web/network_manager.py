@@ -91,6 +91,16 @@ class NetworkManager:
                 print(f"⚠️ Archivo fuera de RECV_DIR: {absolute_path}")
                 return
 
+            # 🔹 EVITAR REGISTRAR ARCHIVOS QUE ESTÁN DENTRO DE CARPETAS RECIBIDAS
+            # Si el archivo está dentro de una subcarpeta de RECV_DIR, probablemente
+            # es parte de una carpeta y no debe mostrarse individualmente
+            rel_path = os.path.relpath(absolute_path, self.RECV_DIR)
+            if os.path.sep in rel_path and not rel_path.startswith(".."):
+                # Este archivo está dentro de una subcarpeta, es parte de una carpeta recibida
+                # No lo registramos individualmente en el chat
+                print(f"📁 Archivo dentro de carpeta (no mostrar en chat): {rel_path}")
+                return
+
             # Determinar si es archivo individual o parte de carpeta
             filename = os.path.basename(absolute_path)
 
@@ -98,20 +108,20 @@ class NetworkManager:
             if chat_id not in self.chat_messages:
                 self.chat_messages[chat_id] = []
 
-            # Siempre registrar como archivo individual (como funciona actualmente)
-            file_message = {
-                "id": str(uuid.uuid4()),
-                "sender": src_mac,
-                "text": f"[ARCHIVO]{filename}",
-                "file_path": absolute_path,
-                "filename": filename,
-                "timestamp": datetime.now().strftime("%H:%M"),
-                "type": "file",
-            }
+        # Registrar como archivo individual solo si no es parte de una carpeta
+        file_message = {
+            "id": str(uuid.uuid4()),
+            "sender": src_mac,
+            "text": f"[ARCHIVO]{filename}",
+            "file_path": absolute_path,
+            "filename": filename,
+            "timestamp": datetime.now().strftime("%H:%M"),
+            "type": "file",
+        }
 
-            self.chat_messages[chat_id].append(file_message)
-            print(f"✅ Archivo recibido: {filename}")
-            print(f"📁 Ruta: {absolute_path}")
+        self.chat_messages[chat_id].append(file_message)
+        print(f"✅ Archivo recibido: {filename}")
+        print(f"📁 Ruta: {absolute_path}")
 
     def start(self, my_mac: str):
         print(f"Starting NetworkManager with MAC: {my_mac}")

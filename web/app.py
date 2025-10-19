@@ -345,6 +345,7 @@ def upload_file():
 def upload_folder():
     """
     Envía una carpeta directamente a send_files manteniendo estructura
+    Y además crea y envía un .zip de la misma carpeta
     """
     dest_mac = request.form.get("dest_mac")
 
@@ -381,6 +382,7 @@ def upload_folder():
     os.makedirs(target_root, exist_ok=True)
 
     from werkzeug.utils import secure_filename as _sf
+    import zipfile
 
     def safe_rel_path(raw_path: str) -> str:
         raw_path = raw_path.replace("\\", "/")
@@ -400,16 +402,12 @@ def upload_folder():
         rel = f.filename or f.name
 
         # 🔹 CORRECCIÓN: Remover el nombre de la carpeta raíz de la ruta relativa
-        # Si la ruta es "Proyecto/src/main.py", queremos que sea "src/main.py"
         rel = rel.replace("\\", "/")
         if "/" in rel:
-            # Remover el primer componente (el nombre de la carpeta raíz)
             path_parts = rel.split("/")
             if len(path_parts) > 1 and path_parts[0] == folder_name:
-                # Si el primer componente coincide con folder_name, lo removemos
                 rel = "/".join(path_parts[1:])
             elif len(path_parts) > 1:
-                # Si no coincide pero hay múltiples componentes, usamos todo menos el primero
                 rel = "/".join(path_parts[1:])
 
         rel_safe = safe_rel_path(rel)
@@ -418,35 +416,70 @@ def upload_folder():
         f.save(dest_path)
         print(f"💾 Archivo guardado: {dest_path}")
 
+    # 🔹 CREAR ARCHIVO .ZIP DE LA CARPETA
+    zip_path = os.path.join(SEND_DIR, f"{os.path.basename(target_root)}.zip")
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(target_root):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Calcular ruta relativa para mantener estructura en el zip
+                    rel_path = os.path.relpath(file_path, target_root)
+                    zipf.write(file_path, rel_path)
+        print(f"📦 Archivo ZIP creado: {zip_path}")
+    except Exception as e:
+        print(f"❌ Error creando ZIP: {e}")
+        return jsonify({"error": f"Error creando archivo ZIP: {e}"}), 500
+
     # Enviar carpeta
     try:
-        print(
-            f"_________________________ENVIANDO CARPETA: {target_root}_______________________"
-        )
+        print(f"📤 Enviando carpeta: {target_root}")
         network_manager.send_folder(dest_mac, target_root, use_ack=True)
 
-        # Registrar en el chat
+        # 🔹 ENVIAR ARCHIVO .ZIP TAMBIÉN
+        print(f"📤 Enviando archivo ZIP: {zip_path}")
+        network_manager.send_file(dest_mac, zip_path)
+
+        # Registrar en el chat - CARPETA
         my_mac = session.get("mac")
         chat_id = "-".join(sorted([my_mac, dest_mac]))
         if chat_id not in chat_messages:
             chat_messages[chat_id] = []
 
+        # Mensaje para la carpeta
         folder_message = {
             "id": str(uuid.uuid4()),
             "sender": my_mac,
             "text": f"[CARPETA]{os.path.basename(target_root)}",
-            "folder_path": target_root,  # Ruta completa de la carpeta
+            "folder_path": target_root,
             "folder_name": os.path.basename(target_root),
             "timestamp": datetime.now().strftime("%H:%M"),
             "type": "folder",
         }
-
         chat_messages[chat_id].append(folder_message)
+
+        # 🔹 Mensaje para el archivo ZIP
+        zip_message = {
+            "id": str(uuid.uuid4()),
+            "sender": my_mac,
+            "text": f"[ARCHIVO]{os.path.basename(zip_path)}",
+            "filename": os.path.basename(zip_path),
+            "file_path": zip_path,
+            "timestamp": datetime.now().strftime("%H:%M"),
+            "type": "file",
+        }
+        chat_messages[chat_id].append(zip_message)
 
     except Exception as e:
         return jsonify({"error": f"send_folder failed: {e}"}), 500
 
-    return jsonify({"ok": True, "folder_name": os.path.basename(target_root)})
+    return jsonify(
+        {
+            "ok": True,
+            "folder_name": os.path.basename(target_root),
+            "zip_name": os.path.basename(zip_path),
+        }
+    )
 
 
 @app.route("/logout")
