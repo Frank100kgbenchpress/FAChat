@@ -136,7 +136,7 @@ function renderMessages(messages) {
 
         const timestamp = m.timestamp ? `<small class="timestamp">${m.timestamp}</small>` : '';
 
-        // Detectar si es mensaje de archivo
+        // Detectar si es mensaje de archivo normal
         if (m.type === 'file' || (m.text && m.text.startsWith("[ARCHIVO]"))) {
             messageElement.classList.add("file-message");
             const filename = m.filename || m.text.replace("[ARCHIVO]", "");
@@ -167,6 +167,28 @@ function renderMessages(messages) {
                     </div>
                     <div class="file-info">
                         <div class="file-name">${filename}</div>
+                        <div class="file-actions">
+                            <button onclick="downloadFile('${m.id}')" class="download-btn">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                ${timestamp}
+            `;
+        }
+        // Detectar si es mensaje de carpeta (nuevo)
+        else if (m.type === 'folder' || (m.text && m.text.startsWith("[CARPETA]"))) {
+            messageElement.classList.add("file-message");
+            const folderName = m.filename ? m.filename.replace('.zip', '') : m.text.replace("[CARPETA]", "");
+
+            messageElement.innerHTML = `
+                <div class="file-message-container ${isMyMessage ? 'own-file' : 'other-file'}">
+                    <div class="file-icon">
+                        <i class="fas fa-folder"></i>
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name">${folderName}</div>
                         <div class="file-actions">
                             <button onclick="downloadFile('${m.id}')" class="download-btn">
                                 <i class="fas fa-download"></i>

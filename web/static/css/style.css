@@ -590,3 +590,14 @@ header {
   font-size: 0.8em;
   opacity: 0.7;
 }
+
+/* En style.css, puedes añadir esto si quieres colores específicos para carpetas */
+.file-message-container .fa-folder {
+  color: #ffa500;
+  /* Color naranja para carpetas */
+}
+
+.msg-me .file-message-container .fa-folder {
+  color: white;
+  /* Color blanco para carpetas propias */
+}
