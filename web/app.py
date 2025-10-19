@@ -64,7 +64,7 @@ from ethernet import get_interface_mac, INTERFACE
 
 app = create_app()
 
-UPLOAD_FOLDER = tempfile.gettempdir()  # Usar carpeta temporal del sistema
+# Usar carpeta temporal del sistema
 ALLOWED_EXTENSIONS = set(
     [
         "txt",
@@ -81,10 +81,19 @@ ALLOWED_EXTENSIONS = set(
         "mp3",
     ]
 )
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 1000 * 1024 * 1024
+# 🔹 Crear carpetas de archivos enviados y recibidos
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SEND_DIR = os.path.join(BASE_DIR, "send_files")
+RECV_DIR = os.path.join(BASE_DIR, "recv_files")
 
-network_manager = NetworkManager()
+for folder in ["send_files", "recv_files"]:
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+        print(f"[INIT] 📁 Carpeta creada: {folder}", flush=True)
+
+app.config["MAX_CONTENT_LENGTH"] = 10000 * 1024 * 1024
+
+network_manager = NetworkManager(RECV_DIR)
 chat_messages = network_manager.chat_messages
 
 no_login = False
@@ -93,10 +102,6 @@ no_login = False
 mac_env = os.getenv("MY_MAC")
 print(f"[INIT] MY_MAC env var: {mac_env}", flush=True)
 
-# if mac_env:
-#     CONTAINER_MAC = mac_env
-#     print(f"[INIT] Usando MAC de variable de entorno: {CONTAINER_MAC}", flush=True)
-# else:
 try:
     print(f"[INIT] Intentando obtener MAC de interfaz: {INTERFACE}", flush=True)
     mac_bytes = get_interface_mac(INTERFACE)
@@ -273,27 +278,26 @@ def upload_file():
     try:
         # Guardar archivo temporalmente con nombre seguro
         filename = secure_filename(file.filename)
-        temp_path = os.path.join(
-            app.config["UPLOAD_FOLDER"], f"{uuid.uuid4()}_{filename}"
-        )
-
-        print(f"[send_file] Guardando archivo temporal: {temp_path}", flush=True)
-        file.save(temp_path)
+        # Guardar archivo en la carpeta de enviados
+        file_id = str(uuid.uuid4())
+        save_path = os.path.join(SEND_DIR, f"{file_id}_{filename}")
+        file.save(save_path)
+        print(f"[send_file] 📤 Archivo guardado en enviados: {save_path}", flush=True)
 
         # Verificar que el archivo se guardó correctamente
-        if not os.path.exists(temp_path):
+        if not os.path.exists(save_path):
             return jsonify(
                 {"success": False, "error": "Error al guardar archivo temporal"}
             ), 500
 
-        file_size = os.path.getsize(temp_path)
+        file_size = os.path.getsize(save_path)
         print(
             f"[send_file] Archivo guardado: {filename} ({file_size} bytes)", flush=True
         )
 
         # Enviar archivo por red
         print(f"[send_file] Enviando archivo a {other_mac}...", flush=True)
-        network_manager.send_file(other_mac, temp_path)
+        network_manager.send_file(other_mac, save_path)
         print("[send_file] ✅ Archivo enviado correctamente", flush=True)
 
         # Guardar referencia en chat_messages
@@ -305,18 +309,13 @@ def upload_file():
             "id": str(uuid.uuid4()),
             "sender": my_mac,
             "text": f"[ARCHIVO]{filename}",
+            "filename": filename,
+            "file_path": save_path,  # 🔹 agregar ruta real
             "timestamp": datetime.now().strftime("%H:%M"),
+            "type": "file",
         }
-        chat_messages[chat_id].append(file_message)
 
-        # # Limpiar archivo temporal
-        # try:
-        #     os.remove(temp_path)
-        #     print(f"[send_file] Archivo temporal eliminado: {temp_path}", flush=True)
-        # except Exception as e:
-        #     print(
-        #         f"[send_file] ⚠️ No se pudo eliminar archivo temporal: {e}", flush=True
-        #     )
+        chat_messages[chat_id].append(file_message)
 
         return jsonify({"success": True, "filename": filename})
 
@@ -334,12 +333,153 @@ def upload_file():
 
         # Intentar limpiar archivo temporal en caso de error
         try:
-            if "temp_path" in locals() and os.path.exists(temp_path):
-                os.remove(temp_path)
+            if "temp_path" in locals() and os.path.exists(save_path):
+                os.remove(save_path)
         except Exception:
             pass
 
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/upload_folder", methods=["POST"])
+def upload_folder():
+    """
+    Envía una carpeta directamente a send_files manteniendo estructura
+    Y además crea y envía un .zip de la misma carpeta
+    """
+    dest_mac = request.form.get("dest_mac")
+
+    if not dest_mac:
+        return jsonify({"error": "dest_mac requerido"}), 400
+
+    files_list = request.files.getlist("files")
+    if not files_list:
+        return jsonify({"error": "no files uploaded"}), 400
+
+    # 🔹 OBTENER NOMBRE REAL DE LA CARPETA
+    folder_name = "carpeta"
+    if files_list and files_list[0].filename:
+        first_path = files_list[0].filename
+        if "/" in first_path:
+            folder_name = first_path.split("/")[0]
+        elif "\\" in first_path:
+            folder_name = first_path.split("\\")[0]
+
+    # Si no pudimos determinar el nombre, usar uno por defecto con timestamp
+    if folder_name == "carpeta":
+        folder_name = f"carpeta_{int(time.time())}"
+
+    # 🔹 CREAR CARPETA CON NOMBRE REAL DENTRO DE SEND_FILES
+    target_root = os.path.join(SEND_DIR, folder_name)
+
+    # Si ya existe, agregar sufijo numérico
+    counter = 1
+    original_target = target_root
+    while os.path.exists(target_root):
+        target_root = f"{original_target}_{counter}"
+        counter += 1
+
+    os.makedirs(target_root, exist_ok=True)
+
+    from werkzeug.utils import secure_filename as _sf
+    import zipfile
+
+    def safe_rel_path(raw_path: str) -> str:
+        raw_path = raw_path.replace("\\", "/")
+        parts = [p for p in raw_path.split("/") if p not in ("", ".")]
+        safe_parts = []
+        for p in parts:
+            if p == "..":
+                continue
+            s = _sf(p)
+            if not s:
+                s = "file"
+            safe_parts.append(s)
+        return os.path.join(*safe_parts) if safe_parts else "file"
+
+    # Guardar archivos manteniendo estructura (CORREGIDO)
+    for f in files_list:
+        rel = f.filename or f.name
+
+        # 🔹 CORRECCIÓN: Remover el nombre de la carpeta raíz de la ruta relativa
+        rel = rel.replace("\\", "/")
+        if "/" in rel:
+            path_parts = rel.split("/")
+            if len(path_parts) > 1 and path_parts[0] == folder_name:
+                rel = "/".join(path_parts[1:])
+            elif len(path_parts) > 1:
+                rel = "/".join(path_parts[1:])
+
+        rel_safe = safe_rel_path(rel)
+        dest_path = os.path.join(target_root, rel_safe)
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        f.save(dest_path)
+        print(f"💾 Archivo guardado: {dest_path}")
+
+    # 🔹 CREAR ARCHIVO .ZIP DE LA CARPETA
+    zip_path = os.path.join(SEND_DIR, f"{os.path.basename(target_root)}.zip")
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(target_root):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Calcular ruta relativa para mantener estructura en el zip
+                    rel_path = os.path.relpath(file_path, target_root)
+                    zipf.write(file_path, rel_path)
+        print(f"📦 Archivo ZIP creado: {zip_path}")
+    except Exception as e:
+        print(f"❌ Error creando ZIP: {e}")
+        return jsonify({"error": f"Error creando archivo ZIP: {e}"}), 500
+
+    # Enviar carpeta
+    try:
+        print(f"📤 Enviando carpeta: {target_root}")
+        network_manager.send_folder(dest_mac, target_root, use_ack=True)
+
+        # 🔹 ENVIAR ARCHIVO .ZIP TAMBIÉN
+        print(f"📤 Enviando archivo ZIP: {zip_path}")
+        network_manager.send_file(dest_mac, zip_path)
+
+        # Registrar en el chat - CARPETA
+        my_mac = session.get("mac")
+        chat_id = "-".join(sorted([my_mac, dest_mac]))
+        if chat_id not in chat_messages:
+            chat_messages[chat_id] = []
+
+        # Mensaje para la carpeta
+        folder_message = {
+            "id": str(uuid.uuid4()),
+            "sender": my_mac,
+            "text": f"[CARPETA]{os.path.basename(target_root)}",
+            "folder_path": target_root,
+            "folder_name": os.path.basename(target_root),
+            "timestamp": datetime.now().strftime("%H:%M"),
+            "type": "folder",
+        }
+        chat_messages[chat_id].append(folder_message)
+
+        # 🔹 Mensaje para el archivo ZIP
+        zip_message = {
+            "id": str(uuid.uuid4()),
+            "sender": my_mac,
+            "text": f"[ARCHIVO]{os.path.basename(zip_path)}",
+            "filename": os.path.basename(zip_path),
+            "file_path": zip_path,
+            "timestamp": datetime.now().strftime("%H:%M"),
+            "type": "file",
+        }
+        chat_messages[chat_id].append(zip_message)
+
+    except Exception as e:
+        return jsonify({"error": f"send_folder failed: {e}"}), 500
+
+    return jsonify(
+        {
+            "ok": True,
+            "folder_name": os.path.basename(target_root),
+            "zip_name": os.path.basename(zip_path),
+        }
+    )
 
 
 @app.route("/logout")
@@ -355,60 +495,44 @@ def logout():
 
 @app.route("/download_file/<file_id>")
 def download_file(file_id):
-    """Descargar archivo por ID del mensaje"""
+    """Descargar archivo real según su ID almacenado"""
     try:
         print(f"[DOWNLOAD] Solicitado archivo con ID: {file_id}", flush=True)
 
-        # Buscar el archivo en todos los chats
+        # Buscar el mensaje que tenga este ID
         for chat_id, messages in network_manager.chat_messages.items():
             for message in messages:
                 if message.get("id") == file_id and (
                     message.get("type") == "file"
                     or message.get("text", "").startswith("[ARCHIVO]")
                 ):
+                    file_path = message.get("file_path")
                     filename = message.get("filename", "archivo_descargado")
 
-                    print(f"[DOWNLOAD] Encontrado mensaje: {filename}", flush=True)
-
-                    # BUSCAR EL ARCHIVO EN /app/ POR NOMBRE
-                    import glob
-
-                    # Buscar archivos que coincidan con el patrón
-                    search_patterns = [
-                        f"/app/recv_*{filename}",
-                        f"/app/*{filename}*",
-                        f"/app/{filename}",
-                    ]
-
-                    for pattern in search_patterns:
-                        for file_path in glob.glob(pattern):
-                            if os.path.exists(file_path):
-                                print(
-                                    f"[DOWNLOAD] ✅ Enviando archivo: {file_path}",
-                                    flush=True,
-                                )
-
-                                # Opción 1: Sin as_attachment (descarga en navegador)
-                                # return send_file(file_path)
-
-                                # Opción 2: Forzar descarga con headers
-                                response = send_file(file_path)
-                                response.headers["Content-Disposition"] = (
-                                    f"attachment; filename={filename}"
-                                )
-                                return response
+                    if not file_path or not os.path.exists(file_path):
+                        print(
+                            f"[DOWNLOAD] ❌ Archivo no encontrado en disco: {file_path}",
+                            flush=True,
+                        )
+                        return "Archivo no encontrado", 404
 
                     print(
-                        f"[DOWNLOAD] ❌ No se encontró archivo para: {filename}",
-                        flush=True,
+                        f"[DOWNLOAD] ✅ Enviando archivo real: {file_path}", flush=True
                     )
-                    return "Archivo no encontrado", 404
 
-        print(f"[DOWNLOAD] ❌ Mensaje no encontrado para ID: {file_id}", flush=True)
+                    # 🔹 Usa send_file en modo binario con el nombre correcto
+                    return send_file(
+                        file_path,
+                        as_attachment=True,
+                        download_name=filename,
+                        mimetype="application/octet-stream",
+                    )
+
+        print(f"[DOWNLOAD] ❌ Mensaje con ID {file_id} no encontrado", flush=True)
         return "Mensaje no encontrado", 404
 
     except Exception as e:
-        print(f"[DOWNLOAD] ❌ Error: {e}", flush=True)
+        print(f"[DOWNLOAD] ❌ Error al descargar: {e}", flush=True)
         import traceback
 
         traceback.print_exc()

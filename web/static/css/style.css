@@ -467,13 +467,59 @@ header {
   background: #1565C0;
 }
 
-.file-button {
-  background: #00BFFF !important;
-  padding: 10px 15px !important;
+.file-button,
+#send-folder-btn {
+  background: #00BFFF;
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 44px;
+  height: 44px;
+  cursor: pointer;
+  font-size: 1em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  transition: background 0.2s ease, transform 0.08s ease;
 }
 
-.file-button:hover {
-  background: #0099CC !important;
+.file-button i,
+#send-folder-btn i {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.file-button:hover,
+#send-folder-btn:hover {
+  background: #0099CC;
+  transform: translateY(-2px);
+}
+
+.input-area .file-button,
+.input-area #send-folder-btn {
+  margin: 0 4px;
+}
+
+.file-button.icon-only,
+#send-folder-btn.icon-only {
+  padding: 8px;
+  width: 44px;
+  height: 44px;
+}
+
+@media (max-width: 600px) {
+  .input-area {
+    gap: 6px;
+  }
+  .file-button,
+  #send-folder-btn {
+    padding: 8px;
+    min-width: 40px;
+    height: 40px;
+  }
 }
 
 .chat-mac {
@@ -543,4 +589,57 @@ header {
 .file-message .file-size {
   font-size: 0.8em;
   opacity: 0.7;
+}
+
+/* En style.css, puedes añadir esto si quieres colores específicos para carpetas */
+.file-message-container .fa-folder {
+  color: #ffa500;
+  /* Color naranja para carpetas */
+}
+
+.msg-me .file-message-container .fa-folder {
+  color: white;
+  /* Color blanco para carpetas propias */
+}
+
+/* Estilos para el spinner de carga */
+.upload-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #4CAF50;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.loading-text {
+  font-size: 12px;
+  color: #ffffff;
+  font-style: italic;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.upload-in-progress .file-message-container {
+  background: linear-gradient(135deg, #447ce3 0%, #3b2aba 100%);
+}
+
+.upload-in-progress .file-name {
+  color: white;
+  font-weight: 500;
 }
