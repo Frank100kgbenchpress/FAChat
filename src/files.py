@@ -25,7 +25,7 @@ from ethernet import (
     INTERFACE,
 )
 
-CHUNK_SIZE = 1000
+CHUNK_SIZE = 1400
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 
 # recepción en progreso

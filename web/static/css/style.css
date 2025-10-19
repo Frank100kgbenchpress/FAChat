@@ -601,3 +601,45 @@ header {
   color: white;
   /* Color blanco para carpetas propias */
 }
+
+/* Estilos para el spinner de carga */
+.upload-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #4CAF50;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.loading-text {
+  font-size: 12px;
+  color: #ffffff;
+  font-style: italic;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.upload-in-progress .file-message-container {
+  background: linear-gradient(135deg, #447ce3 0%, #3b2aba 100%);
+}
+
+.upload-in-progress .file-name {
+  color: white;
+  font-weight: 500;
+}

@@ -1,6 +1,82 @@
 let users = [];
 let currentChat = null;
 let isGroupChat = false;
+let uploadStates = new Map(); // Guarda estado de subidas: {id: {type, name}}
+let messageAnimations = new Set(); // Controla mensajes ya animados
+
+// Función para mostrar mensaje de envío en progreso
+function showUploadInProgress(type, name, id) {
+    uploadStates.set(id, {
+        type: type,
+        name: name,
+        startTime: Date.now()
+    });
+
+    renderUploadMessages();
+}
+
+// Función para completar envío
+function completeUpload(id) {
+    if (uploadStates.has(id)) {
+        // Eliminar inmediatamente
+        uploadStates.delete(id);
+        renderUploadMessages();
+    }
+}
+
+// Función para renderizar mensajes de subida
+function renderUploadMessages() {
+    const messagesDiv = document.getElementById("messages");
+    const existingUploads = messagesDiv.querySelectorAll('.upload-in-progress');
+
+    // Eliminar mensajes de subida existentes
+    existingUploads.forEach(el => el.remove());
+
+    // Agregar mensajes de subida actuales
+    uploadStates.forEach((state, id) => {
+        const uploadElement = createUploadElement(state, id);
+        messagesDiv.appendChild(uploadElement);
+        setTimeout(() => uploadElement.classList.add("show"), 50);
+    });
+
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+// Función para crear elemento de subida
+function createUploadElement(state, id) {
+    const element = document.createElement("div");
+    element.className = `message msg-me file-message upload-in-progress`;
+    element.dataset.uploadId = id;
+
+    const icon = state.type === 'folder' ? 'fa-folder' : 'fa-file-archive';
+
+    element.innerHTML = `
+        <div class="file-message-container own-file">
+            <div class="file-icon">
+                <i class="fas ${icon}"></i>
+            </div>
+            <div class="file-info">
+                <div class="file-name">${state.name}</div>
+                <div class="upload-loading">
+                    <div class="spinner"></div>
+                    <span class="loading-text">Enviando...</span>
+                </div>
+            </div>
+        </div>
+        <small class="timestamp">Enviando...</small>
+    `;
+
+    return element;
+}
+
+// Función para formatear bytes
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
 
 // Cargar usuarios desde Flask
 function fetchUsers() {
@@ -115,20 +191,35 @@ function loadMessages(otherMac) {
 function renderMessages(messages) {
     const messagesDiv = document.getElementById("messages");
 
-    // Verificar si los mensajes son diferentes usando IDs
-    const currentMessageIds = new Set(Array.from(messagesDiv.querySelectorAll('.message')).map(div => div.dataset.messageId));
+    // Guardar elementos de upload existentes
+    const existingUploads = Array.from(messagesDiv.querySelectorAll('.upload-in-progress'));
+
+    // Verificar si los mensajes normales son diferentes usando IDs
+    const currentNormalMessages = Array.from(messagesDiv.querySelectorAll('.message:not(.upload-in-progress)'));
+    const currentMessageIds = new Set(currentNormalMessages.map(div => div.dataset.messageId));
     const newMessageIds = new Set(messages.map(m => m.id));
 
-    // Si los conjuntos de IDs son iguales, no hacer nada
+    // Si los conjuntos de IDs son iguales, no hacer nada con mensajes normales
     if (currentMessageIds.size === newMessageIds.size &&
         [...currentMessageIds].every(id => newMessageIds.has(id))) {
         return;
     }
 
-    // Si hay cambios, renderizar todo de nuevo
-    messagesDiv.innerHTML = "";
+    // Si hay cambios, limpiar solo mensajes normales que no existen en los nuevos
+    currentNormalMessages.forEach(el => {
+        const messageId = el.dataset.messageId;
+        if (!newMessageIds.has(messageId)) {
+            el.remove();
+        }
+    });
 
+    // Renderizar solo mensajes nuevos
     messages.forEach(m => {
+        // Si el mensaje ya existe en el DOM, no hacer nada
+        if (document.querySelector(`[data-message-id="${m.id}"]`)) {
+            return;
+        }
+
         const messageElement = document.createElement("div");
         const isMyMessage = m.sender === currentUserMac;
         messageElement.className = `message ${isMyMessage ? 'msg-me' : 'msg-them'}`;
@@ -204,7 +295,20 @@ function renderMessages(messages) {
         }
 
         messagesDiv.appendChild(messageElement);
-        setTimeout(() => messageElement.classList.add("show"), 50);
+
+        // Solo animar si es un mensaje nuevo (no durante refresh)
+        if (!messageAnimations.has(m.id)) {
+            setTimeout(() => messageElement.classList.add("show"), 50);
+            messageAnimations.add(m.id);
+        } else {
+            // Si ya fue animado antes, mostrarlo directamente
+            messageElement.classList.add("show");
+        }
+    });
+
+    // Re-agregar elementos de upload
+    existingUploads.forEach(uploadEl => {
+        messagesDiv.appendChild(uploadEl);
     });
 
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -295,12 +399,12 @@ function sendMessage() {
     input.value = "";
 }
 
-// Función para enviar archivo
+// Función para enviar archivos individuales
 function sendFile(file) {
     if (!file) return;
 
     const fileName = file.name;
-    const fileSize = (file.size / 1024 / 1024).toFixed(2) + " MB";
+    const uploadId = 'upload_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
     if (isGroupChat) {
         // Enviar archivo a todos los usuarios online
@@ -308,8 +412,6 @@ function sendFile(file) {
         let sentCount = 0;
 
         onlineUsers.forEach(user => {
-            // Aquí implementarías el envío real del archivo
-            // Por ahora solo mostramos el mensaje
             console.log(`Enviando archivo ${fileName} a ${user.mac}`);
             sentCount++;
         });
@@ -318,7 +420,7 @@ function sendFile(file) {
         const messagesDiv = document.getElementById("messages");
         const p = document.createElement("p");
         p.className = "msg-me file-message";
-        p.innerHTML = `<span class="file-info">📎 ${fileName}</span><span class="file-size">${fileSize}</span> <small class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</small>`;
+        p.innerHTML = `<span class="file-info">📎 ${fileName}</span><span class="file-size">${(file.size / 1024 / 1024).toFixed(2)} MB</span> <small class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</small>`;
         messagesDiv.appendChild(p);
         setTimeout(() => p.classList.add("show"), 50);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -326,33 +428,46 @@ function sendFile(file) {
         alert(`Archivo '${fileName}' enviado a ${sentCount} usuarios`);
 
     } else if(currentChat) {
+        // Mostrar mensaje de subida en progreso
+        showUploadInProgress('file', fileName, uploadId);
+
         const formData = new FormData();
         formData.append('file', file);
         formData.append('other_mac', currentChat.mac);
 
-        fetch('/upload_file', {
-            method: 'POST',
-            body: formData
-        })
-        .then(res => res.json())
-        .then(data => {
-            if(data.success) {
-                // Mostrar mensaje de archivo enviado
-                const messagesDiv = document.getElementById("messages");
-                const p = document.createElement("p");
-                p.className = "msg-me file-message";
-                p.innerHTML = `<span class="file-info">📎 ${fileName}</span><span class="file-size">${fileSize}</span> <small class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</small>`;
-                messagesDiv.appendChild(p);
-                setTimeout(() => p.classList.add("show"), 50);
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        // Usar XMLHttpRequest para el envío real
+        const xhr = new XMLHttpRequest();
+
+        xhr.addEventListener('load', () => {
+            if (xhr.status === 200) {
+                const data = JSON.parse(xhr.responseText);
+                if(data.success) {
+                    completeUpload(uploadId);
+                    console.log("✅ Archivo enviado correctamente");
+
+                    // Recargar mensajes para mostrar el mensaje final
+                    if (!isGroupChat && currentChat) {
+                        setTimeout(() => {
+                            loadMessages(currentChat.mac);
+                        }, 500);
+                    }
+                } else {
+                    completeUpload(uploadId);
+                    alert("Error al enviar archivo: " + (data.error || "Error desconocido"));
+                }
             } else {
-                alert("Error al enviar archivo: " + (data.error || "Error desconocido"));
+                throw new Error(`HTTP ${xhr.status}`);
             }
-        })
-        .catch(err => {
-            console.error("Error enviando archivo:", err);
+        });
+
+        xhr.addEventListener('error', () => {
+            console.error("Error enviando archivo:");
+            completeUpload(uploadId);
             alert("Error de conexión al enviar archivo");
         });
+
+        xhr.open('POST', '/upload_file');
+        xhr.send(formData);
     }
 }
 
@@ -471,6 +586,12 @@ document.addEventListener("DOMContentLoaded", () => {
             const destMac = currentChat.mac;
             if (!destMac) return alert("Destino no seleccionado.");
 
+            const baseFolder = (files[0] && (files[0].webkitRelativePath || files[0].name).split('/')[0]) || "carpeta";
+            const uploadId = 'upload_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+            // Mostrar mensaje de subida en progreso
+            showUploadInProgress('folder', baseFolder, uploadId);
+
             // Construir FormData con webkitRelativePath para preservar estructura
             const fd = new FormData();
             fd.append("dest_mac", destMac);
@@ -480,39 +601,44 @@ document.addEventListener("DOMContentLoaded", () => {
                 fd.append("files", file, filename);
             }
 
-            // Mostrar feedback local en la UI
-            const baseFolder = (files[0] && (files[0].webkitRelativePath || files[0].name).split('/')[0]) || "carpeta";
-            const messagesDiv = document.getElementById("messages");
-            const p = document.createElement("div");
-            p.className = "message msg-me file-message";
-            p.innerHTML = `
-                <div class="file-message-container own-file">
-                    <div class="file-icon"><i class="fas fa-folder"></i></div>
-                    <div class="file-info">
-                        <div class="file-name">${baseFolder}</div>
-                        <div class="file-actions"><span class="file-size">carpeta</span></div>
-                    </div>
-                </div>
-                <small class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</small>
-            `;
-            messagesDiv.appendChild(p);
-            setTimeout(() => p.classList.add("show"), 50);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
-            // Enviar al servidor
+            // Usar XMLHttpRequest para el envío real
             try {
-                const res = await fetch("/upload_folder", { method: "POST", body: fd });
-                const data = await res.json();
-                if (!res.ok) {
-                    console.error("Error enviando carpeta:", data);
-                    alert("Error al enviar carpeta: " + (data.error || JSON.stringify(data)));
-                } else {
-                    console.log("Envío de carpeta iniciado:", data);
-                    // opcional: mostrar notificación o actualizar UI con upload_id
-                }
+                const xhr = new XMLHttpRequest();
+
+                xhr.addEventListener('load', () => {
+                    if (xhr.status === 200) {
+                        const data = JSON.parse(xhr.responseText);
+                        if (data.ok) {
+                            completeUpload(uploadId);
+                            console.log("✅ Carpeta enviada correctamente");
+
+                            // Recargar mensajes para mostrar el mensaje final
+                            if (!isGroupChat && currentChat) {
+                                loadMessages(currentChat.mac);
+                            }
+                        } else {
+                            console.error("Error enviando carpeta:", data);
+                            completeUpload(uploadId);
+                            alert("Error al enviar carpeta: " + (data.error || JSON.stringify(data)));
+                        }
+                    } else {
+                        throw new Error(`HTTP ${xhr.status}`);
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    console.error("Error de red al enviar carpeta");
+                    completeUpload(uploadId);
+                    alert("Error de conexión al enviar carpeta");
+                });
+
+                xhr.open("POST", "/upload_folder");
+                xhr.send(fd);
+
             } catch (err) {
-                console.error("Error de red al enviar carpeta:", err);
-                alert("Error de conexión al enviar carpeta");
+                console.error("Error al enviar carpeta:", err);
+                completeUpload(uploadId);
+                alert("Error al enviar carpeta");
             } finally {
                 // reset input para permitir re-selección de la misma carpeta
                 e.target.value = "";
